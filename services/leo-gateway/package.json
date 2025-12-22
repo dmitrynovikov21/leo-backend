@@ -1,0 +1,33 @@
+{
+  "name": "leo-gateway",
+  "version": "1.0.0",
+  "description": "LiteLLM Proxy for Leo Platform",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@langchain/openai": "^0.3.0",
+    "axios": "^1.6.2",
+    "chromadb": "^1.7.3",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "mammoth": "^1.6.0",
+    "multer": "^1.4.5-lts.1",
+    "pdf-parse": "^1.1.1",
+    "pg": "^8.11.3",
+    "xlsx": "^0.18.5",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.11",
+    "@types/node": "^20.10.4",
+    "@types/pg": "^8.10.9",
+    "tsx": "^4.6.2",
+    "typescript": "^5.3.3"
+  }
+}

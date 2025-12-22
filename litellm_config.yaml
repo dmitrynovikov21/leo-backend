@@ -1,0 +1,38 @@
+model_list:
+  # Claude
+  - model_name: claude-3-haiku-20240307
+    litellm_params:
+      model: claude-3-haiku-20240307
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-3-5-sonnet-20241022
+    litellm_params:
+      model: claude-3-5-sonnet-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # OpenAI
+  - model_name: gpt-4o
+    litellm_params:
+      model: gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: text-embedding-3-small
+    litellm_params:
+      model: text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  success_callback: ["langsmith"]
+  failure_callback: ["langsmith"]
+
+environment_variables:
+  LANGSMITH_API_KEY: os.environ/LANGSMITH_API_KEY
+  LANGSMITH_PROJECT: os.environ/LANGSMITH_PROJECT
+  LANGCHAIN_TRACING_V2: "true"

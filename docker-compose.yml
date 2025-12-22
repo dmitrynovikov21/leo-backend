@@ -1,0 +1,110 @@
+services:
+  # Separate PostgreSQL for LiteLLM only
+  litellm-db:
+    image: postgres:16-alpine
+    container_name: litellm-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm_password
+      POSTGRES_DB: litellm
+    volumes:
+      - litellm_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - leo_default
+
+  # LiteLLM (self-hosted proxy with UI)
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    command: ["--config", "/app/config.yaml"]
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - DATABASE_URL=postgresql://litellm:litellm_password@litellm-db:5432/litellm
+      - UI_USERNAME=admin
+      - UI_PASSWORD=admin
+      # LangSmith tracing
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-leo}
+      - LANGCHAIN_TRACING_V2=true
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml
+    ports:
+      - "4000:4000"
+    depends_on:
+      litellm-db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - leo_default
+
+  # ChromaDB (vector store)
+  chroma:
+    image: chromadb/chroma:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - ANONYMIZED_TELEMETRY=false
+    restart: unless-stopped
+    networks:
+      - leo_default
+
+  # Leo Gateway - LiteLLM Proxy + Document Processing
+  leo-gateway:
+    build:
+      context: ./services/leo-gateway
+      dockerfile: Dockerfile
+    environment:
+      - PORT=8080
+      - DATABASE_URL=${DATABASE_URL}
+      - LITELLM_URL=http://litellm:4000
+      - CHROMA_URL=http://chroma:8000
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-gpt-4o-mini}
+      - NODE_ENV=production
+    ports:
+      - "8080:8080"
+    depends_on:
+      - litellm
+      - chroma
+    restart: unless-stopped
+    networks:
+      - leo_default
+
+  # Agent Orchestrator - Agent Manager
+  agent-orchestrator:
+    build:
+      context: ./services/agent-orchestrator
+      dockerfile: Dockerfile
+    environment:
+      - PORT=8081
+      - DATABASE_URL=${DATABASE_URL}
+      - GATEWAY_URL=http://leo-gateway:8080
+      - AGENT_IMAGE=leo-agent-runtime:latest
+      - DOCKER_NETWORK=leo_default
+      - NODE_ENV=production
+    ports:
+      - "8081:8081"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - leo-gateway
+    restart: unless-stopped
+    networks:
+      - leo_default
+
+networks:
+  leo_default:
+    external: true
+
+volumes:
+  chroma_data:
+  litellm_postgres_data:
