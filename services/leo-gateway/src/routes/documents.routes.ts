@@ -3,7 +3,7 @@ import multer from 'multer';
 import { z } from 'zod';
 import { parseDocument } from '../services/parser.service';
 import { chromaService } from '../services/chroma.service';
-import { splitText, TextChunk } from '../services/text-splitter.service';
+import { smartSplitText } from '../services/chunking';
 import { query } from '../db';
 
 const router = Router();
@@ -34,12 +34,11 @@ const upload = multer({
     },
 });
 
-// ===== NEW API: Parse document to chunks (no vectorization) =====
+// ===== Smart Parse: Split document into semantic chunks =====
 router.post('/parse', upload.single('file'), async (req: Request, res: Response) => {
     try {
         const file = req.file;
-        const chunkSize = parseInt(req.body.chunkSize) || 1000;
-        const chunkOverlap = parseInt(req.body.chunkOverlap) || 200;
+        const maxChunkSize = parseInt(req.body.chunkSize) || 800;
 
         if (!file) {
             return res.status(400).json({ error: 'No file provided' });
@@ -50,10 +49,10 @@ router.post('/parse', upload.single('file'), async (req: Request, res: Response)
         // Parse document to text
         const parsed = await parseDocument(file.buffer, file.originalname, file.mimetype);
 
-        // Split text into chunks using RecursiveCharacterTextSplitter logic
-        const chunks = splitText(parsed.text, { chunkSize, chunkOverlap });
+        // Smart split: preserves sentence boundaries
+        const chunks = smartSplitText(parsed.text, { maxChunkSize });
 
-        console.log(`📊 Split into ${chunks.length} chunks`);
+        console.log(`📊 Smart split into ${chunks.length} chunks`);
 
         return res.json({
             success: true,
@@ -61,9 +60,13 @@ router.post('/parse', upload.single('file'), async (req: Request, res: Response)
             mimeType: file.mimetype,
             fileSize: file.size,
             totalChunks: chunks.length,
-            chunkSize,
-            chunkOverlap,
-            chunks,
+            method: 'smart',
+            maxChunkSize,
+            chunks: chunks.map(c => ({
+                index: c.index,
+                text: c.text,
+                sentenceCount: c.sentenceCount,
+            })),
         });
     } catch (error: any) {
         console.error('Document parse error:', error.message);
@@ -121,6 +124,8 @@ router.post('/vectorize', async (req: Request, res: Response) => {
             agentId: z.string(),
             userId: z.string(),
             filename: z.string(),
+            fileSize: z.number().optional().default(0),
+            mimeType: z.string().optional().default('application/octet-stream'),
             chunks: z.array(z.object({
                 index: z.number(),
                 text: z.string(),
@@ -136,9 +141,40 @@ router.post('/vectorize', async (req: Request, res: Response) => {
             });
         }
 
-        const { agentId, userId, filename, chunks } = parsed.data;
+        const { agentId, userId, filename, fileSize, mimeType, chunks } = parsed.data;
 
         console.log(`🔢 Vectorizing ${chunks.length} chunks for agent ${agentId}`);
+
+        let finalFileSize = fileSize;
+        let finalMimeType = mimeType;
+
+        // 1. Check if document already exists
+        const existingDocs = await query<{ id: string; fileSize: number; mimeType: string }>(
+            `SELECT id, "fileSize", "mimeType" FROM knowledge_bases WHERE "agentId" = $1 AND filename = $2`,
+            [agentId, filename]
+        );
+
+        if (existingDocs.length > 0) {
+            const existing = existingDocs[0];
+            console.log(`🔄 Document ${filename} exists. Replacing but preserving metadata...`);
+
+            // Preserve existing metadata if valid (user request: new data might be "broken")
+            if (existing.fileSize && existing.fileSize > 0) {
+                finalFileSize = existing.fileSize;
+            }
+            if (existing.mimeType) {
+                finalMimeType = existing.mimeType;
+            }
+
+            // Delete from Chroma
+            await chromaService.deleteDocuments(agentId, { source: filename });
+
+            // Delete from DB (cascades to chunks)
+            await query(
+                `DELETE FROM knowledge_bases WHERE "agentId" = $1 AND filename = $2`,
+                [agentId, filename]
+            );
+        }
 
         // Convert to DocumentChunk format for Chroma
         const documentChunks = chunks.map((chunk, i) => ({
@@ -147,7 +183,7 @@ router.post('/vectorize', async (req: Request, res: Response) => {
             metadata: {
                 source: filename,
                 chunkIndex: chunk.index,
-                mimeType: 'text/plain',
+                mimeType: finalMimeType,
                 agentId,
                 userId,
             },
@@ -159,23 +195,39 @@ router.post('/vectorize', async (req: Request, res: Response) => {
         console.log(`✅ Added ${chunks.length} vectors to Chroma collection agent_${agentId}`);
 
         // Save to knowledge_bases table
-        // Note: gen_random_uuid() might not work if pgcrypto is not enabled. 
-        // Using string interpolation for values is unsafe, but here we use parameterized queries.
-        // We'll trust DB has gen_random_uuid() or similar, if not we might catch error.
-        // To be safe regarding ID generation, better generate UUID in code.
         const kbId = crypto.randomUUID();
 
         await query(
             `INSERT INTO knowledge_bases (id, "agentId", filename, "fileUrl", "fileSize", "mimeType", created_at, updated_at, status)
              VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), 'VECTORIZED')`,
-            [kbId, agentId, filename, `chroma://agent_${agentId}`, 0, 'application/chunks'] // fileSize 0 for now as we don't have original size here easily
+            [kbId, agentId, filename, `chroma://agent_${agentId}`, finalFileSize, finalMimeType]
         );
+
+        // Save chunks to document_chunks table
+        // We use a transaction conceptually, but here sequential inserts for simplicity
+        if (chunks.length > 0) {
+            // Construct generic INSERT for multiple rows or loop
+            // For simplicity and safety against SQL inject, we loop or use unnest if supported.
+            // Let's use loop for safety and simplicity with existing query helper (it might not support bulk insert easily without specific syntax)
+
+            // Actually, let's just do sequential await for now or Promise.all (faster)
+            const insertPromises = chunks.map(chunk =>
+                query(
+                    `INSERT INTO document_chunks (id, "knowledgeBaseId", content, chunk_index, created_at, updated_at)
+                     VALUES ($1, $2, $3, $4, NOW(), NOW())`,
+                    [crypto.randomUUID(), kbId, chunk.text, chunk.index]
+                )
+            );
+
+            await Promise.all(insertPromises);
+        }
 
         return res.json({
             success: true,
             agentId,
             filename,
             chunksVectorized: chunks.length,
+            knowledgeBaseId: kbId
         });
     } catch (error: any) {
         console.error('Vectorize error:', error.message);

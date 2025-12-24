@@ -35,7 +35,7 @@ services:
     volumes:
       - ./litellm_config.yaml:/app/config.yaml
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
     depends_on:
       litellm-db:
         condition: service_healthy
@@ -47,7 +47,7 @@ services:
   chroma:
     image: chromadb/chroma:latest
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - chroma_data:/chroma/chroma
     environment:

@@ -41,7 +41,7 @@ class LLMClient {
         try {
             const response = await this.client.post<ChatCompletionResponse>('/api/v1/chat/completions', {
                 userId: config.userId,
-                model: model || 'claude-3-5-sonnet-20241022',
+                model: model || 'claude-haiku-4',
                 messages,
             });
 

@@ -8,6 +8,8 @@ import personaRoutes from './routes/persona.routes';
 import usageRoutes from './routes/usage.routes';
 import agentPromptRoutes from './routes/agent-prompt.routes';
 import documentsRoutes from './routes/documents.routes';
+import agentDocumentsRoutes from './routes/agent-documents.routes';
+import agentChatRoutes from './routes/agent-chat.routes';
 
 const app = express();
 
@@ -32,6 +34,8 @@ app.use('/api/v1/generate-persona', personaRoutes);
 app.use('/api/v1/usage', usageRoutes);
 app.use('/api/v1/generate-agent-prompt', agentPromptRoutes);
 app.use('/api/v1/documents', documentsRoutes);
+app.use('/api/v1/agents', agentDocumentsRoutes);
+app.use('/api/v1/agents', agentChatRoutes);  // Agent chat testing API
 
 // Error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

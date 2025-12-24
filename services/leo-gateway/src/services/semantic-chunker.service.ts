@@ -29,7 +29,7 @@ const SEMANTIC_CHUNKING_PROMPT = `Ты — эксперт по разбиени�
 
 export async function semanticChunking(text: string): Promise<SemanticChunk[]> {
     // For very long texts, split into manageable parts first
-    const MAX_INPUT_LENGTH = 15000; // ~4K tokens
+    const MAX_INPUT_LENGTH = 8000; // ~2K tokens (safer for 4k-8k output)
 
     if (text.length > MAX_INPUT_LENGTH) {
         // Split long text into parts and process each
@@ -86,7 +86,7 @@ async function processTextPart(text: string): Promise<SemanticChunk[]> {
                 { role: 'user', content: text },
             ],
             temperature: 0.3,
-            max_tokens: 4096,
+            max_tokens: 8192,
         });
 
         const content = response.choices[0]?.message?.content;

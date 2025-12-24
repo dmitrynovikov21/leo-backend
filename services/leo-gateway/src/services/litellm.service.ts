@@ -82,7 +82,7 @@ class LiteLLMService {
 
     async generatePersona(role: string, description: string): Promise<string> {
         const response = await this.chatCompletion({
-            model: 'gpt-4o-mini',
+            model: 'claude-haiku-4',
             messages: [
                 {
                     role: 'system',

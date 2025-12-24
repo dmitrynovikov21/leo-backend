@@ -520,7 +520,7 @@ DELETE /api/v1/agents/agent_xyz789
 
 ### POST `/api/v1/agents/:id/start`
 
-**Зачем:** Запуск Docker-контейнера с Telegram ботом.
+**Зачем:** Запуск Docker-контейнера с  ботом.
 
 **Запрос:**
 ```

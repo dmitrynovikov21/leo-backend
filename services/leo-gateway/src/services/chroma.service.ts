@@ -102,6 +102,18 @@ class ChromaService {
         }
     }
 
+    async deleteDocuments(agentId: string, where: any): Promise<void> {
+        try {
+            const collection = await this.getOrCreateCollection(agentId);
+            await collection.delete({
+                where: where,
+            });
+        } catch (error) {
+            console.error(`Failed to delete documents for agent ${agentId}`, error);
+            throw error;
+        }
+    }
+
     async getCollectionInfo(agentId: string): Promise<{ count: number } | null> {
         try {
             const collection = await this.getOrCreateCollection(agentId);

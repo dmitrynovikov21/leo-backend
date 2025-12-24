@@ -2,7 +2,7 @@ import { query, queryOne } from '../db';
 
 interface UsageRecord {
     id: string;
-    user_id: string;
+    userId: string;
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
@@ -27,7 +27,7 @@ class UsageService {
         model: string
     ): Promise<void> {
         await query(
-            `INSERT INTO token_usage (id, user_id, prompt_tokens, completion_tokens, total_tokens, model, created_at)
+            `INSERT INTO token_usage (id, "userId", prompt_tokens, completion_tokens, total_tokens, model, created_at)
        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW())`,
             [userId, promptTokens, completionTokens, totalTokens, model]
         );
@@ -46,7 +46,7 @@ class UsageService {
          COALESCE(SUM(total_tokens), 0) as total_tokens,
          COUNT(*) as request_count
        FROM token_usage
-       WHERE user_id = $1`,
+       WHERE "userId" = $1`,
             [userId]
         );
 
@@ -72,7 +72,7 @@ class UsageService {
          COALESCE(SUM(total_tokens), 0) as total_tokens,
          COUNT(*) as request_count
        FROM token_usage
-       WHERE user_id = $1 AND created_at >= $2 AND created_at <= $3`,
+       WHERE "userId" = $1 AND created_at >= $2 AND created_at <= $3`,
             [userId, startDate, endDate]
         );
 

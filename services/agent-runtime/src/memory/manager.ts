@@ -126,7 +126,7 @@ export class MemoryManager {
         try {
             const response = await axios.post(`${config.gatewayUrl}/api/v1/chat/completions`, {
                 userId: config.userId,
-                model: 'claude-3-5-sonnet-20241022',
+                model: 'claude-haiku-4',
                 messages: [
                     {
                         role: 'system',
