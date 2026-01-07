@@ -1,5 +1,6 @@
 import { query, queryOne } from '../db';
 import { dockerService, ContainerInfo } from './docker.service';
+import { behaviorService } from './behavior.service';
 
 export type AgentStatus = 'STOPPED' | 'STARTING' | 'RUNNING' | 'ERROR';
 
@@ -194,7 +195,25 @@ class AgentsService {
         // First, stop and remove container if exists
         await dockerService.removeAgentContainer(id);
 
-        const result = await query(`DELETE FROM agents WHERE id = $1`, [id]);
+        // Clean up Chroma collection via gateway
+        try {
+            const gatewayUrl = process.env.GATEWAY_URL || 'http://leo-gateway:8080';
+            await fetch(`${gatewayUrl}/api/v1/documents/${id}/collection`, {
+                method: 'DELETE',
+            });
+        } catch (error) {
+            console.warn('Failed to delete Chroma collection:', error);
+            // Continue with deletion anyway
+        }
+
+        // Delete related data (CASCADE should handle most, but be explicit)
+        await query(`DELETE FROM system_prompt_versions WHERE agent_id = $1`, [id]);
+        await query(`DELETE FROM agent_messages WHERE agent_id = $1`, [id]);
+        await query(`DELETE FROM agent_summaries WHERE agent_id = $1`, [id]);
+        await query(`DELETE FROM knowledge_bases WHERE "agentId" = $1`, [id]);
+
+        // Delete the agent
+        await query(`DELETE FROM agents WHERE id = $1`, [id]);
         return true;
     }
 
@@ -205,7 +224,8 @@ class AgentsService {
             return null;
         }
 
-
+        // Fetch behavior settings
+        const behavior = await behaviorService.getBehaviorForContainer(id);
 
         // Update status to STARTING
         await this.updateAgentStatus(id, 'STARTING');
@@ -217,6 +237,7 @@ class AgentsService {
                 agentName: agent.name,
                 systemPrompt: agent.systemPrompt,
                 telegramToken: agent.telegramToken || '', // Pass empty string if no token
+                behavior: behavior || undefined,
             });
 
             // Update agent with container info
@@ -276,6 +297,262 @@ class AgentsService {
         }
 
         return { agent, container: containerInfo };
+    }
+
+    async getAgentStats(id: string): Promise<{
+        totalDialogs: number;
+        todayDialogs: number;
+        totalTokens: number;
+        avgResponseTimeMs: number;
+    }> {
+        const stats = await queryOne<{
+            total_dialogs: string;
+            today_dialogs: string;
+            total_tokens: string;
+            avg_response_time: string;
+        }>(
+            `WITH token_stats AS (
+                SELECT 
+                    COALESCE(SUM(total_tokens), 0) as total_tokens,
+                    COALESCE(AVG(response_time_ms) FILTER (WHERE response_time_ms > 0), 0) as avg_response_time
+                FROM token_usage 
+                WHERE agent_id = $1
+            ),
+            dialog_stats AS (
+                SELECT COUNT(DISTINCT telegram_user_id) as total_dialogs
+                FROM agent_messages
+                WHERE agent_id = $1
+            ),
+            today_dialogs AS (
+                SELECT COUNT(DISTINCT telegram_user_id) as today_dialogs
+                FROM agent_messages
+                WHERE agent_id = $1 AND created_at >= CURRENT_DATE
+            )
+            SELECT 
+                d.total_dialogs,
+                td.today_dialogs,
+                ts.total_tokens,
+                ts.avg_response_time
+            FROM token_stats ts, dialog_stats d, today_dialogs td`,
+            [id]
+        );
+
+        return {
+            totalDialogs: parseInt(stats?.total_dialogs || '0', 10),
+            todayDialogs: parseInt(stats?.today_dialogs || '0', 10),
+            totalTokens: parseInt(stats?.total_tokens || '0', 10),
+            avgResponseTimeMs: Math.round(parseFloat(stats?.avg_response_time || '0')),
+        };
+    }
+
+    async getAgentStatsByPeriod(id: string, from: Date, to: Date): Promise<Array<{
+        date: string;
+        tokens: number;
+        dialogs: number;
+    }>> {
+        const stats = await query<{
+            day: Date;
+            tokens: string;
+            dialogs: string;
+        }>(
+            `WITH dates AS (
+                SELECT generate_series($2::date, $3::date, '1 day'::interval)::date as day
+            ),
+            daily_tokens AS (
+                SELECT 
+                    created_at::date as day,
+                    SUM(total_tokens) as tokens
+                FROM token_usage
+                WHERE agent_id = $1 AND created_at >= $2 AND created_at <= $3 + interval '1 day'
+                GROUP BY 1
+            ),
+            daily_dialogs AS (
+                SELECT
+                    created_at::date as day,
+                    COUNT(DISTINCT telegram_user_id) as dialogs
+                FROM agent_messages
+                WHERE agent_id = $1 AND created_at >= $2 AND created_at <= $3 + interval '1 day'
+                GROUP BY 1
+            )
+            SELECT 
+                d.day,
+                COALESCE(dt.tokens, 0) as tokens,
+                COALESCE(dd.dialogs, 0) as dialogs
+            FROM dates d
+            LEFT JOIN daily_tokens dt ON dt.day = d.day
+            LEFT JOIN daily_dialogs dd ON dd.day = d.day
+            ORDER BY d.day ASC`,
+            [id, from, to]
+        );
+
+        return stats.map(s => ({
+            date: s.day.toISOString().split('T')[0],
+            tokens: parseInt(s.tokens || '0', 10),
+            dialogs: parseInt(s.dialogs || '0', 10),
+        }));
+    }
+
+    async getUserStats(userId: string): Promise<{
+        totalDialogs: number;
+        totalMessages: number;
+        totalUsers: number;
+        totalTokens: number;
+    }> {
+        // Get user's agents first
+        const agents = await this.getAgentsByUser(userId);
+        const agentIds = agents.map(a => a.id);
+
+        if (agentIds.length === 0) {
+            return {
+                totalDialogs: 0,
+                totalMessages: 0,
+                totalUsers: 0,
+                totalTokens: 0,
+            };
+        }
+
+        const result = await queryOne<{
+            total_dialogs: string;
+            total_messages: string;
+            total_users: string;
+            total_tokens: string;
+        }>(
+            `SELECT
+                (SELECT COUNT(DISTINCT (agent_id, telegram_user_id)) FROM agent_messages WHERE agent_id = ANY($1)) as total_dialogs,
+                (SELECT COUNT(*) FROM agent_messages WHERE agent_id = ANY($1)) as total_messages,
+                (SELECT COUNT(DISTINCT telegram_user_id) FROM agent_messages WHERE agent_id = ANY($1)) as total_users,
+                (SELECT COALESCE(SUM(total_tokens), 0) FROM token_usage WHERE "userId" = $2) as total_tokens`,
+            [agentIds, userId]
+        );
+
+        return {
+            totalDialogs: parseInt(result?.total_dialogs || '0', 10),
+            totalMessages: parseInt(result?.total_messages || '0', 10),
+            totalUsers: parseInt(result?.total_users || '0', 10),
+            totalTokens: parseInt(result?.total_tokens || '0', 10),
+        };
+    }
+
+    async getUserStatsHistory(userId: string): Promise<{
+        last24h: Array<{ date: string; tokens: number; dialogs: number }>;
+        last7d: Array<{ date: string; tokens: number; dialogs: number }>;
+        last30d: Array<{ date: string; tokens: number; dialogs: number }>;
+    }> {
+        const agents = await this.getAgentsByUser(userId);
+        const agentIds = agents.map(a => a.id);
+
+        if (agentIds.length === 0) {
+            return { last24h: [], last7d: [], last30d: [] };
+        }
+
+        // 24 Hours (Hourly interval)
+        const stats24h = await query<{ date: Date; tokens: string; dialogs: string }>(
+            `WITH points AS (
+                SELECT generate_series(date_trunc('hour', NOW() - INTERVAL '24 hours'), date_trunc('hour', NOW()), '1 hour'::interval) as date
+            ),
+            data AS (
+                SELECT 
+                    date_trunc('hour', created_at) as date,
+                    SUM(total_tokens) as tokens
+                FROM token_usage
+                WHERE "userId" = $2 AND created_at >= NOW() - INTERVAL '24 hours'
+                GROUP BY 1
+            ),
+            dialogs AS (
+                SELECT
+                    date_trunc('hour', created_at) as date,
+                    COUNT(DISTINCT telegram_user_id) FILTER (WHERE agent_id IS NOT NULL) as count
+                FROM agent_messages
+                WHERE agent_id = ANY($1) AND created_at >= NOW() - INTERVAL '24 hours'
+                GROUP BY 1
+            )
+            SELECT 
+                p.date,
+                COALESCE(d.tokens, 0) as tokens,
+                COALESCE(dg.count, 0) as dialogs
+            FROM points p
+            LEFT JOIN data d ON d.date = p.date
+            LEFT JOIN dialogs dg ON dg.date = p.date
+            ORDER BY p.date ASC`,
+            [agentIds, userId]
+        );
+
+        // 7 Days (Daily interval)
+        const stats7d = await query<{ date: Date; tokens: string; dialogs: string }>(
+            `WITH points AS (
+                SELECT generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, '1 day'::interval)::date as date
+            ),
+            data AS (
+                SELECT 
+                    created_at::date as date,
+                    SUM(total_tokens) as tokens
+                FROM token_usage
+                WHERE "userId" = $2 AND created_at >= CURRENT_DATE - INTERVAL '6 days'
+                GROUP BY 1
+            ),
+            dialogs AS (
+                SELECT
+                    created_at::date as date,
+                    COUNT(DISTINCT telegram_user_id) FILTER (WHERE agent_id IS NOT NULL) as count
+                FROM agent_messages
+                WHERE agent_id = ANY($1) AND created_at >= CURRENT_DATE - INTERVAL '6 days'
+                GROUP BY 1
+            )
+            SELECT 
+                p.date,
+                COALESCE(d.tokens, 0) as tokens,
+                COALESCE(dg.count, 0) as dialogs
+            FROM points p
+            LEFT JOIN data d ON d.date = p.date
+            LEFT JOIN dialogs dg ON dg.date = p.date
+            ORDER BY p.date ASC`,
+            [agentIds, userId]
+        );
+
+        // 30 Days (3 Days interval)
+        // Note: generate_series supports step. For grouping data, we can truncate or bin.
+        // Simplest strategy: Generate series with 3 day step, join with data grouped by 3-day buckets relative to start.
+        // Or easier: generate series, join daily data, then group by bucket in application? No, let's do SQL.
+        // We group by floor((current_date - date) / 3).
+        const stats30d = await query<{ date: Date; tokens: string; dialogs: string }>(
+            `WITH periods AS (
+                SELECT generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '3 days'::interval)::date as start_date
+            ),
+            data_raw AS (
+                 SELECT created_at::date as day, total_tokens FROM token_usage WHERE "userId" = $2 AND created_at >= CURRENT_DATE - INTERVAL '30 days'
+            ),
+            dialogs_raw AS (
+                 SELECT created_at::date as day, agent_id, telegram_user_id FROM agent_messages WHERE agent_id = ANY($1) AND created_at >= CURRENT_DATE - INTERVAL '30 days'
+            )
+            SELECT 
+                p.start_date as date,
+                COALESCE(SUM(d.total_tokens), 0) as tokens,
+                COUNT(DISTINCT dg.telegram_user_id) FILTER (WHERE dg.agent_id IS NOT NULL) as dialogs
+            FROM periods p
+            LEFT JOIN data_raw d ON d.day >= p.start_date AND d.day < p.start_date + INTERVAL '3 days'
+            LEFT JOIN dialogs_raw dg ON dg.day >= p.start_date AND dg.day < p.start_date + INTERVAL '3 days'
+            GROUP BY p.start_date
+            ORDER BY p.start_date ASC`,
+            [agentIds, userId]
+        );
+
+        return {
+            last24h: stats24h.map(s => ({
+                date: s.date.toISOString(),
+                tokens: parseInt(s.tokens || '0', 10),
+                dialogs: parseInt(s.dialogs || '0', 10)
+            })),
+            last7d: stats7d.map(s => ({
+                date: s.date.toISOString().split('T')[0],
+                tokens: parseInt(s.tokens || '0', 10),
+                dialogs: parseInt(s.dialogs || '0', 10)
+            })),
+            last30d: stats30d.map(s => ({
+                date: s.date.toISOString().split('T')[0],
+                tokens: parseInt(s.tokens || '0', 10),
+                dialogs: parseInt(s.dialogs || '0', 10)
+            })),
+        };
     }
 
     private async updateAgentStatus(id: string, status: AgentStatus): Promise<void> {

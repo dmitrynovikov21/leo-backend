@@ -137,6 +137,91 @@ router.put('/:id', async (req: Request, res: Response) => {
     }
 });
 
+const getStatsPeriodSchema = z.object({
+    from: z.string().datetime(),
+    to: z.string().datetime(),
+});
+
+// GET /api/v1/agents/stats/overview - Get global user stats
+router.get('/stats/overview', async (req: Request, res: Response) => {
+    try {
+        const userId = req.headers['x-user-id'] as string; // Assuming auth middleware adds this header
+
+        // Fallback for dev/test without auth middleware
+        const targetUserId = userId || 'user123';
+
+        const stats = await agentsService.getUserStats(targetUserId);
+
+        return res.json(stats);
+    } catch (error: any) {
+        console.error('Get user stats error:', error.message);
+        return res.status(500).json({
+            error: 'Failed to get user stats',
+            message: error.message,
+        });
+    }
+});
+
+// GET /api/v1/agents/stats/history - Get user stats history (breakdowns)
+router.get('/stats/history', async (req: Request, res: Response) => {
+    try {
+        const userId = req.headers['x-user-id'] as string;
+        const targetUserId = userId || 'user123';
+
+        const history = await agentsService.getUserStatsHistory(targetUserId);
+
+        return res.json(history);
+    } catch (error: any) {
+        console.error('Get user stats history error:', error.message);
+        return res.status(500).json({
+            error: 'Failed to get user stats history',
+            message: error.message,
+        });
+    }
+});
+
+// GET /api/v1/agents/:id/stats - Get agent statistics
+router.get('/:id/stats', async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const stats = await agentsService.getAgentStats(id);
+
+        return res.json(stats);
+    } catch (error: any) {
+        console.error('Get agent stats error:', error.message);
+        return res.status(500).json({
+            error: 'Failed to get agent stats',
+            message: error.message,
+        });
+    }
+});
+
+// GET /api/v1/agents/:id/stats/period - Get agent statistics by period
+router.get('/:id/stats/period', async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const parsed = getStatsPeriodSchema.safeParse(req.query);
+
+        if (!parsed.success) {
+            return res.status(400).json({
+                error: 'Validation error',
+                details: parsed.error.flatten().fieldErrors,
+            });
+        }
+
+        const { from, to } = parsed.data;
+        const stats = await agentsService.getAgentStatsByPeriod(id, new Date(from), new Date(to));
+
+        return res.json(stats);
+    } catch (error: any) {
+        console.error('Get agent stats by period error:', error.message);
+        return res.status(500).json({
+            error: 'Failed to get agent period stats',
+            message: error.message,
+        });
+    }
+});
+
 // PATCH /api/v1/agents/:id - Update agent (partial)
 router.patch('/:id', async (req: Request, res: Response) => {
     try {

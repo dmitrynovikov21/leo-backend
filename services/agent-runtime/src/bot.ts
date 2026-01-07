@@ -12,6 +12,36 @@ const pendingMessages = new Map<number, {
 
 const memoryManager = new MemoryManager(config.agentId);
 
+/**
+ * Build the full system prompt by combining base prompt with behavior settings
+ */
+function buildFullSystemPrompt(): string {
+    let prompt = config.systemPrompt;
+
+    // Prepend identity instruction if displayName is set
+    if (config.identityInstruction) {
+        prompt = `${config.identityInstruction}\n\n${prompt}`;
+    }
+
+    // Add tone instructions
+    if (config.tone.length > 0) {
+        prompt += `\n\n## ТОН ОБЩЕНИЯ\nИспользуй следующий тон в общении: ${config.tone.join(', ')}.`;
+    }
+
+    // Add guardrails as strict rules
+    if (config.guardrails.length > 0) {
+        prompt += `\n\n## ОГРАНИЧЕНИЯ (СТРОГО СОБЛЮДАЙ)\n`;
+        for (const g of config.guardrails) {
+            prompt += `- ${g.rule}\n`;
+        }
+    }
+
+    return prompt;
+}
+
+// Cache the full system prompt
+const fullSystemPrompt = buildFullSystemPrompt();
+
 async function processMessages(userId: number, messages: string[], ctx: Context): Promise<void> {
     const combinedMessage = messages.join('\n');
 
@@ -37,7 +67,7 @@ async function processMessages(userId: number, messages: string[], ctx: Context)
 
         // Build messages with context
         const chatMessages = llmClient.buildMessages(
-            config.systemPrompt,
+            fullSystemPrompt,
             memoryContext.summary,
             memoryContext.recentMessages,
             ragContext
@@ -101,7 +131,8 @@ export function createBot(): Bot<Context> {
 
     // Start command
     bot.command('start', async (ctx) => {
-        const welcomeMessage = `👋 Привет! Я ${config.agentName}.
+        // Use custom welcome message if set, otherwise generate default
+        const welcomeMessage = config.welcomeMessage || `👋 Привет! Я ${config.agentName}.
 
 Я готов помочь тебе. Просто напиши мне сообщение, и я отвечу!
 

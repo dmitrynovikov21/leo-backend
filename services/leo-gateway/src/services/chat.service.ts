@@ -6,7 +6,7 @@
 
 import { query, queryOne } from '../db';
 import { litellmService, ChatMessage } from './litellm.service';
-import { chromaService } from './chroma.service';
+import { hybridSearchService } from './hybrid-search.service';
 
 export type MessageType = 'HUMAN' | 'AI' | 'SYSTEM';
 
@@ -53,17 +53,46 @@ function sessionToUserId(sessionId: string): number {
 
 class ChatService {
 
-    async getAgentConfig(agentId: string): Promise<{ systemPrompt: string; name: string } | null> {
-        const agent = await queryOne<{ systemPrompt: string; name: string }>(
-            `SELECT "systemPrompt", name FROM agents WHERE id = $1`,
+    async getAgentConfig(agentId: string): Promise<{ systemPrompt: string; name: string; temperature: number } | null> {
+        const agent = await queryOne<{
+            systemPrompt: string;
+            name: string;
+            display_name: string | null;
+            temperature: number;
+            tone: string[] | null;
+            guardrails: { id: string; rule: string }[] | null;
+        }>(
+            `SELECT "systemPrompt", name, display_name, temperature, tone, guardrails FROM agents WHERE id = $1`,
             [agentId]
         );
 
         if (!agent) return null;
 
+        // Build full system prompt with behavior settings
+        let fullPrompt = agent.systemPrompt || 'You are a helpful assistant.';
+
+        // Prepend identity instruction if displayName is set
+        if (agent.display_name) {
+            fullPrompt = `Ты — ${agent.display_name}.\n\n${fullPrompt}`;
+        }
+
+        // Add tone instructions
+        if (agent.tone && agent.tone.length > 0) {
+            fullPrompt += `\n\n## ТОН ОБЩЕНИЯ\nИспользуй следующий тон в общении: ${agent.tone.join(', ')}.`;
+        }
+
+        // Add guardrails as strict rules
+        if (agent.guardrails && agent.guardrails.length > 0) {
+            fullPrompt += `\n\n## ОГРАНИЧЕНИЯ (СТРОГО СОБЛЮДАЙ)\n`;
+            for (const g of agent.guardrails) {
+                fullPrompt += `- ${g.rule}\n`;
+            }
+        }
+
         return {
-            systemPrompt: agent.systemPrompt || 'You are a helpful assistant.',
+            systemPrompt: fullPrompt,
             name: agent.name,
+            temperature: agent.temperature ?? 0.5,
         };
     }
 
@@ -128,7 +157,7 @@ class ChatService {
 
     async searchDocuments(agentId: string, queryText: string): Promise<string | null> {
         try {
-            const results = await chromaService.searchDocuments(agentId, queryText, 3);
+            const results = await hybridSearchService.searchWithFallback(agentId, queryText, 3);
 
             if (results.length === 0) return null;
 
@@ -136,7 +165,7 @@ class ChatService {
                 .map((r, i) => `[${i + 1}] ${r.content}`)
                 .join('\n\n');
         } catch (error) {
-            console.error('RAG search error:', error);
+            console.error('Hybrid search error:', error);
             return null;
         }
     }
@@ -213,6 +242,7 @@ class ChatService {
         const response = await litellmService.chatCompletion({
             model: 'claude-haiku-4',
             messages: chatMessages,
+            temperature: agentConfig.temperature,
         });
 
         const aiResponse = response.choices[0]?.message?.content || 'No response';

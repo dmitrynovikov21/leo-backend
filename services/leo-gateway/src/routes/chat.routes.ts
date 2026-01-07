@@ -16,6 +16,7 @@ const chatCompletionSchema = z.object({
     model: z.string().optional(),
     temperature: z.number().min(0).max(2).optional(),
     max_tokens: z.number().positive().optional(),
+    agentId: z.string().optional(),
 });
 
 router.post('/completions', async (req: Request, res: Response) => {
@@ -29,14 +30,16 @@ router.post('/completions', async (req: Request, res: Response) => {
             });
         }
 
-        const { userId, messages, model, temperature, max_tokens } = parsed.data;
+        const { userId, messages, model, temperature, max_tokens, agentId } = parsed.data;
 
+        const startTime = Date.now();
         const response = await litellmService.chatCompletion({
             model,
             messages: messages as ChatMessage[],
             temperature,
             max_tokens,
         });
+        const duration = Date.now() - startTime;
 
         // Track usage
         if (response.usage) {
@@ -45,7 +48,9 @@ router.post('/completions', async (req: Request, res: Response) => {
                 response.usage.prompt_tokens,
                 response.usage.completion_tokens,
                 response.usage.total_tokens,
-                response.model
+                response.model,
+                agentId,
+                duration
             );
         }
 

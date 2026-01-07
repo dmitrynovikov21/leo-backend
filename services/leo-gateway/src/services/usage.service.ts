@@ -24,12 +24,14 @@ class UsageService {
         promptTokens: number,
         completionTokens: number,
         totalTokens: number,
-        model: string
+        model: string,
+        agentId?: string,
+        responseTimeMs: number = 0
     ): Promise<void> {
         await query(
-            `INSERT INTO token_usage (id, "userId", prompt_tokens, completion_tokens, total_tokens, model, created_at)
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW())`,
-            [userId, promptTokens, completionTokens, totalTokens, model]
+            `INSERT INTO token_usage (id, "userId", prompt_tokens, completion_tokens, total_tokens, model, agent_id, response_time_ms, created_at)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, NOW())`,
+            [userId, promptTokens, completionTokens, totalTokens, model, agentId || null, responseTimeMs]
         );
     }
 

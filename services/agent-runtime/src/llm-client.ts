@@ -41,8 +41,10 @@ class LLMClient {
         try {
             const response = await this.client.post<ChatCompletionResponse>('/api/v1/chat/completions', {
                 userId: config.userId,
+                agentId: config.agentId,
                 model: model || 'claude-haiku-4',
                 messages,
+                temperature: config.temperature,
             });
 
             const content = response.data.choices[0]?.message?.content;

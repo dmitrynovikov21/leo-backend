@@ -3,12 +3,23 @@ import { config } from '../config';
 
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
 
+export interface AgentBehaviorConfig {
+    displayName?: string | null;
+    avatarEmoji?: string | null;
+    temperature?: number;
+    debounceMs?: number;
+    welcomeMessage?: string | null;
+    tone?: string[];
+    guardrails?: { id: string; rule: string }[];
+}
+
 export interface AgentContainerConfig {
     agentId: string;
     userId: string;
     agentName: string;
     systemPrompt: string;
     telegramToken: string;
+    behavior?: AgentBehaviorConfig;
 }
 
 export interface ContainerInfo {
@@ -51,6 +62,12 @@ class DockerService {
             }
         }
 
+        // Build identity instruction from behavior
+        const behavior = agentConfig.behavior || {};
+        const identityInstruction = behavior.displayName
+            ? `Ты — ${behavior.displayName}.`
+            : '';
+
         // Build environment variables
         const envVars = [
             `AGENT_ID=${agentConfig.agentId}`,
@@ -60,6 +77,15 @@ class DockerService {
             `TELEGRAM_BOT_TOKEN=${agentConfig.telegramToken}`,
             `GATEWAY_URL=${config.gatewayUrl}`,
             `DATABASE_URL=${config.databaseUrl}`,
+            // Behavior settings
+            `DISPLAY_NAME=${behavior.displayName || ''}`,
+            `AVATAR_EMOJI=${behavior.avatarEmoji || ''}`,
+            `TEMPERATURE=${behavior.temperature ?? 0.7}`,
+            `DEBOUNCE_MS=${behavior.debounceMs ?? 5000}`,
+            `WELCOME_MESSAGE=${behavior.welcomeMessage || ''}`,
+            `TONE=${JSON.stringify(behavior.tone || [])}`,
+            `GUARDRAILS=${JSON.stringify(behavior.guardrails || [])}`,
+            `IDENTITY_INSTRUCTION=${identityInstruction}`,
         ];
 
         // Add LangSmith if configured
