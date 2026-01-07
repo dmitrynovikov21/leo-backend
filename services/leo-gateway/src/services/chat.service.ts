@@ -96,14 +96,14 @@ class ChatService {
         };
     }
 
-    async saveMessage(agentId: string, sessionId: string, messageType: MessageType, content: string): Promise<void> {
+    async saveMessage(agentId: string, sessionId: string, messageType: MessageType, content: string, isTest: boolean = false): Promise<void> {
         const id = generateId();
         const numericUserId = sessionToUserId(sessionId);
 
         await query(
-            `INSERT INTO agent_messages (id, "agentId", telegram_user_id, message_type, content, created_at)
-             VALUES ($1, $2, $3, $4, $5, NOW())`,
-            [id, agentId, numericUserId, messageType, content]
+            `INSERT INTO agent_messages (id, agent_id, telegram_user_id, message_type, content, is_test, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+            [id, agentId, numericUserId, messageType, content, isTest]
         );
     }
 
@@ -112,15 +112,15 @@ class ChatService {
 
         const messages = await query<{
             id: string;
-            agentId: string;
+            agent_id: string;
             telegram_user_id: string;
             message_type: MessageType;
             content: string;
             created_at: Date;
         }>(
-            `SELECT id, "agentId", telegram_user_id, message_type, content, created_at
+            `SELECT id, agent_id, telegram_user_id, message_type, content, created_at
              FROM agent_messages
-             WHERE "agentId" = $1 AND telegram_user_id = $2
+             WHERE agent_id = $1 AND telegram_user_id = $2
              ORDER BY created_at DESC
              LIMIT $3`,
             [agentId, numericUserId, limit]
@@ -128,7 +128,7 @@ class ChatService {
 
         return messages.reverse().map(m => ({
             id: m.id,
-            agentId: m.agentId,
+            agentId: m.agent_id,
             sessionId: sessionId,
             messageType: m.message_type,
             content: m.content,
@@ -141,7 +141,7 @@ class ChatService {
 
         const result = await queryOne<{ summary: string }>(
             `SELECT summary FROM agent_summaries
-             WHERE "agentId" = $1 AND telegram_user_id = $2
+             WHERE agent_id = $1 AND telegram_user_id = $2
              ORDER BY created_at DESC LIMIT 1`,
             [agentId, numericUserId]
         );
@@ -217,7 +217,7 @@ class ChatService {
         }
 
         // Save user message
-        await this.saveMessage(agentId, finalSessionId, 'HUMAN', message);
+        await this.saveMessage(agentId, finalSessionId, 'HUMAN', message, isTest);
 
         // Get memory context
         const memoryContext = await this.getMemoryContext(agentId, finalSessionId);
@@ -248,7 +248,7 @@ class ChatService {
         const aiResponse = response.choices[0]?.message?.content || 'No response';
 
         // Save AI response
-        await this.saveMessage(agentId, finalSessionId, 'AI', aiResponse);
+        await this.saveMessage(agentId, finalSessionId, 'AI', aiResponse, isTest);
 
         return {
             sessionId: finalSessionId,
@@ -263,13 +263,13 @@ class ChatService {
 
             // Delete messages
             await query(
-                `DELETE FROM agent_messages WHERE "agentId" = $1 AND telegram_user_id = $2`,
+                `DELETE FROM agent_messages WHERE agent_id = $1 AND telegram_user_id = $2`,
                 [agentId, numericUserId]
             );
 
             // Delete summaries
             await query(
-                `DELETE FROM agent_summaries WHERE "agentId" = $1 AND telegram_user_id = $2`,
+                `DELETE FROM agent_summaries WHERE agent_id = $1 AND telegram_user_id = $2`,
                 [agentId, numericUserId]
             );
         }

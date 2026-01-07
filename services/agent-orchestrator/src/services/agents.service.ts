@@ -316,17 +316,17 @@ class AgentsService {
                     COALESCE(SUM(total_tokens), 0) as total_tokens,
                     COALESCE(AVG(response_time_ms) FILTER (WHERE response_time_ms > 0), 0) as avg_response_time
                 FROM token_usage 
-                WHERE agent_id = $1
+                WHERE agent_id = $1 AND (is_test IS NULL OR is_test = false)
             ),
             dialog_stats AS (
                 SELECT COUNT(DISTINCT telegram_user_id) as total_dialogs
                 FROM agent_messages
-                WHERE agent_id = $1
+                WHERE agent_id = $1 AND (is_test IS NULL OR is_test = false)
             ),
             today_dialogs AS (
                 SELECT COUNT(DISTINCT telegram_user_id) as today_dialogs
                 FROM agent_messages
-                WHERE agent_id = $1 AND created_at >= CURRENT_DATE
+                WHERE agent_id = $1 AND created_at >= CURRENT_DATE AND (is_test IS NULL OR is_test = false)
             )
             SELECT 
                 d.total_dialogs,
@@ -363,7 +363,7 @@ class AgentsService {
                     created_at::date as day,
                     SUM(total_tokens) as tokens
                 FROM token_usage
-                WHERE agent_id = $1 AND created_at >= $2 AND created_at <= $3 + interval '1 day'
+                WHERE agent_id = $1 AND created_at >= $2 AND created_at <= $3 + interval '1 day' AND (is_test IS NULL OR is_test = false)
                 GROUP BY 1
             ),
             daily_dialogs AS (
@@ -371,7 +371,7 @@ class AgentsService {
                     created_at::date as day,
                     COUNT(DISTINCT telegram_user_id) as dialogs
                 FROM agent_messages
-                WHERE agent_id = $1 AND created_at >= $2 AND created_at <= $3 + interval '1 day'
+                WHERE agent_id = $1 AND created_at >= $2 AND created_at <= $3 + interval '1 day' AND (is_test IS NULL OR is_test = false)
                 GROUP BY 1
             )
             SELECT 
@@ -418,10 +418,10 @@ class AgentsService {
             total_tokens: string;
         }>(
             `SELECT
-                (SELECT COUNT(DISTINCT (agent_id, telegram_user_id)) FROM agent_messages WHERE agent_id = ANY($1)) as total_dialogs,
-                (SELECT COUNT(*) FROM agent_messages WHERE agent_id = ANY($1)) as total_messages,
-                (SELECT COUNT(DISTINCT telegram_user_id) FROM agent_messages WHERE agent_id = ANY($1)) as total_users,
-                (SELECT COALESCE(SUM(total_tokens), 0) FROM token_usage WHERE "userId" = $2) as total_tokens`,
+                (SELECT COUNT(DISTINCT (agent_id, telegram_user_id)) FROM agent_messages WHERE agent_id = ANY($1) AND (is_test IS NULL OR is_test = false)) as total_dialogs,
+                (SELECT COUNT(*) FROM agent_messages WHERE agent_id = ANY($1) AND (is_test IS NULL OR is_test = false)) as total_messages,
+                (SELECT COUNT(DISTINCT telegram_user_id) FROM agent_messages WHERE agent_id = ANY($1) AND (is_test IS NULL OR is_test = false)) as total_users,
+                (SELECT COALESCE(SUM(total_tokens), 0) FROM token_usage WHERE "userId" = $2 AND (is_test IS NULL OR is_test = false)) as total_tokens`,
             [agentIds, userId]
         );
 
@@ -455,7 +455,7 @@ class AgentsService {
                     date_trunc('hour', created_at) as date,
                     SUM(total_tokens) as tokens
                 FROM token_usage
-                WHERE "userId" = $2 AND created_at >= NOW() - INTERVAL '24 hours'
+                WHERE "userId" = $2 AND created_at >= NOW() - INTERVAL '24 hours' AND (is_test IS NULL OR is_test = false)
                 GROUP BY 1
             ),
             dialogs AS (
@@ -463,7 +463,7 @@ class AgentsService {
                     date_trunc('hour', created_at) as date,
                     COUNT(DISTINCT telegram_user_id) FILTER (WHERE agent_id IS NOT NULL) as count
                 FROM agent_messages
-                WHERE agent_id = ANY($1) AND created_at >= NOW() - INTERVAL '24 hours'
+                WHERE agent_id = ANY($1) AND created_at >= NOW() - INTERVAL '24 hours' AND (is_test IS NULL OR is_test = false)
                 GROUP BY 1
             )
             SELECT 
@@ -487,7 +487,7 @@ class AgentsService {
                     created_at::date as date,
                     SUM(total_tokens) as tokens
                 FROM token_usage
-                WHERE "userId" = $2 AND created_at >= CURRENT_DATE - INTERVAL '6 days'
+                WHERE "userId" = $2 AND created_at >= CURRENT_DATE - INTERVAL '6 days' AND (is_test IS NULL OR is_test = false)
                 GROUP BY 1
             ),
             dialogs AS (
@@ -495,7 +495,7 @@ class AgentsService {
                     created_at::date as date,
                     COUNT(DISTINCT telegram_user_id) FILTER (WHERE agent_id IS NOT NULL) as count
                 FROM agent_messages
-                WHERE agent_id = ANY($1) AND created_at >= CURRENT_DATE - INTERVAL '6 days'
+                WHERE agent_id = ANY($1) AND created_at >= CURRENT_DATE - INTERVAL '6 days' AND (is_test IS NULL OR is_test = false)
                 GROUP BY 1
             )
             SELECT 
@@ -519,10 +519,10 @@ class AgentsService {
                 SELECT generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '3 days'::interval)::date as start_date
             ),
             data_raw AS (
-                 SELECT created_at::date as day, total_tokens FROM token_usage WHERE "userId" = $2 AND created_at >= CURRENT_DATE - INTERVAL '30 days'
+                 SELECT created_at::date as day, total_tokens FROM token_usage WHERE "userId" = $2 AND created_at >= CURRENT_DATE - INTERVAL '30 days' AND (is_test IS NULL OR is_test = false)
             ),
             dialogs_raw AS (
-                 SELECT created_at::date as day, agent_id, telegram_user_id FROM agent_messages WHERE agent_id = ANY($1) AND created_at >= CURRENT_DATE - INTERVAL '30 days'
+                 SELECT created_at::date as day, agent_id, telegram_user_id FROM agent_messages WHERE agent_id = ANY($1) AND created_at >= CURRENT_DATE - INTERVAL '30 days' AND (is_test IS NULL OR is_test = false)
             )
             SELECT 
                 p.start_date as date,

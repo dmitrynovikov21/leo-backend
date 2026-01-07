@@ -77,6 +77,7 @@ class DockerService {
             `TELEGRAM_BOT_TOKEN=${agentConfig.telegramToken}`,
             `GATEWAY_URL=${config.gatewayUrl}`,
             `DATABASE_URL=${config.databaseUrl}`,
+            `TZ=Europe/Moscow`, // Timezone for schedule checker
             // Behavior settings
             `DISPLAY_NAME=${behavior.displayName || ''}`,
             `AVATAR_EMOJI=${behavior.avatarEmoji || ''}`,

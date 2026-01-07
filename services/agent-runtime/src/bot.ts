@@ -2,6 +2,7 @@ import { Bot, Context } from 'grammy';
 import { config } from './config';
 import { llmClient } from './llm-client';
 import { MemoryManager } from './memory/manager';
+import { scheduleChecker } from './schedule-checker';
 
 // Debounce storage: userId -> { timeout, messages[] }
 const pendingMessages = new Map<number, {
@@ -48,6 +49,14 @@ async function processMessages(userId: number, messages: string[], ctx: Context)
     console.log(`📨 Processing ${messages.length} message(s) from user ${userId}`);
 
     try {
+        // Check if within working hours
+        const scheduleInfo = await scheduleChecker.checkSchedule();
+        if (!scheduleInfo.isWorking) {
+            console.log(`🚫 Bot is offline, sending offline message`);
+            await ctx.reply(scheduleInfo.offlineMessage || 'Сейчас нерабочее время.');
+            return;
+        }
+
         // Save human message
         await memoryManager.saveMessage(userId, 'HUMAN', combinedMessage);
 
@@ -65,9 +74,16 @@ async function processMessages(userId: number, messages: string[], ctx: Context)
             console.log(`📚 Found ${searchResults.length} relevant documents`);
         }
 
+        // Get schedule description for system prompt
+        const scheduleDescription = await scheduleChecker.getScheduleDescription();
+        let enrichedPrompt = fullSystemPrompt;
+        if (scheduleDescription) {
+            enrichedPrompt += '\n\n' + scheduleDescription;
+        }
+
         // Build messages with context
         const chatMessages = llmClient.buildMessages(
-            fullSystemPrompt,
+            enrichedPrompt,
             memoryContext.summary,
             memoryContext.recentMessages,
             ragContext

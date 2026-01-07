@@ -820,6 +820,61 @@ curl -H "x-user-id: user_abc123" http://localhost:8081/api/v1/agents/stats/histo
 
 ---
 
+### GET `/api/v1/agents/:id/schedule`
+
+**Зачем:** Получение графика работы агента (недельное расписание, праздники, сообщение в нерабочее время).
+
+**Запрос:**
+```
+GET /api/v1/agents/agent_xyz789/schedule
+```
+
+**Ответ:**
+```json
+{
+  "schedule": [
+    [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, false, false, false, false, false],
+    [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, false, false, false, false, false],
+    [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, false, false, false, false, false],
+    [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, false, false, false, false, false],
+    [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, false, false, false, false, false],
+    [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+    [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]
+  ],
+  "holidays": ["04.09.2025", "11.09.2025"],
+  "message": "Здравствуйте! Сейчас я не на связи. Я отвечу вам в рабочее время."
+}
+```
+
+> **Формат:** `schedule` — массив из 7 дней (0=пн, 6=вс), каждый содержит 24 boolean (часы 0-23). `holidays` — даты в формате DD.MM.YYYY.
+
+---
+
+### PUT `/api/v1/agents/:id/schedule`
+
+**Зачем:** Сохранение графика работы агента.
+
+**Запрос:**
+```json
+{
+  "schedule": [
+    [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, false, false, false, false, false],
+    [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, false, false, false, false, false],
+    [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, false, false, false, false, false],
+    [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, false, false, false, false, false],
+    [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, false, false, false, false, false],
+    [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+    [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]
+  ],
+  "message": "Здравствуйте! Сейчас я не на связи. Я отвечу вам в рабочее время.",
+  "holidays": ["04.09.2025", "11.09.2025"]
+}
+```
+
+**Ответ:** Аналогичен GET — возвращает сохранённые данные.
+
+---
+
 ## Статусы агентов
 
 | Статус | Описание |

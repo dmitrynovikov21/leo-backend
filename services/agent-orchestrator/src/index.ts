@@ -5,6 +5,7 @@ import { pool } from './db';
 
 import agentsRoutes from './routes/agents.routes';
 import behaviorRoutes from './routes/behavior.routes';
+import scheduleRoutes from './routes/schedule.routes';
 
 const app = express();
 
@@ -25,6 +26,7 @@ app.get('/health', async (req, res) => {
 // Routes
 app.use('/api/v1/agents', agentsRoutes);
 app.use('/api/v1/agents', behaviorRoutes);
+app.use('/api/v1/agents', scheduleRoutes);
 
 // Error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

@@ -35,7 +35,7 @@ export class MemoryManager {
         const id = generateCuid();
 
         await query(
-            `INSERT INTO agent_messages (id, "agentId", telegram_user_id, message_type, content, created_at)
+            `INSERT INTO agent_messages (id, agent_id, telegram_user_id, message_type, content, created_at)
        VALUES ($1, $2, $3, $4, $5, NOW())`,
             [id, this.agentId, telegramUserId, messageType, content]
         );
@@ -47,15 +47,15 @@ export class MemoryManager {
     async getRecentMessages(telegramUserId: number, limit: number = 20): Promise<StoredMessage[]> {
         const messages = await query<{
             id: string;
-            agentId: string;
+            agent_id: string;
             telegram_user_id: string;
             message_type: MessageType;
             content: string;
             created_at: Date;
         }>(
-            `SELECT id, "agentId", telegram_user_id, message_type, content, created_at
+            `SELECT id, agent_id, telegram_user_id, message_type, content, created_at
        FROM agent_messages
-       WHERE "agentId" = $1 AND telegram_user_id = $2
+       WHERE agent_id = $1 AND telegram_user_id = $2
        ORDER BY created_at DESC
        LIMIT $3`,
             [this.agentId, telegramUserId, limit]
@@ -63,7 +63,7 @@ export class MemoryManager {
 
         return messages.reverse().map(m => ({
             id: m.id,
-            agentId: m.agentId,
+            agentId: m.agent_id,
             telegramUserId: BigInt(m.telegram_user_id),
             messageType: m.message_type,
             content: m.content,
@@ -74,7 +74,7 @@ export class MemoryManager {
     async getLatestSummary(telegramUserId: number): Promise<string | null> {
         const result = await queryOne<{ summary: string }>(
             `SELECT summary FROM agent_summaries
-       WHERE "agentId" = $1 AND telegram_user_id = $2
+       WHERE agent_id = $1 AND telegram_user_id = $2
        ORDER BY created_at DESC LIMIT 1`,
             [this.agentId, telegramUserId]
         );
@@ -93,7 +93,7 @@ export class MemoryManager {
         // Count messages for this user
         const countResult = await queryOne<{ count: string }>(
             `SELECT COUNT(*) as count FROM agent_messages
-       WHERE "agentId" = $1 AND telegram_user_id = $2`,
+       WHERE agent_id = $1 AND telegram_user_id = $2`,
             [this.agentId, telegramUserId]
         );
 
@@ -152,7 +152,7 @@ ${existingSummary ? `\n\nПредыдущее резюме:\n${existingSummary}`
                 // Save new summary
                 const summaryId = generateCuid();
                 await query(
-                    `INSERT INTO agent_summaries (id, "agentId", telegram_user_id, summary, created_at)
+                    `INSERT INTO agent_summaries (id, agent_id, telegram_user_id, summary, created_at)
            VALUES ($1, $2, $3, $4, NOW())`,
                     [summaryId, this.agentId, telegramUserId, summary]
                 );
@@ -164,7 +164,7 @@ ${existingSummary ? `\n\nПредыдущее резюме:\n${existingSummary}`
                 if (idsToKeep.length > 0) {
                     await query(
                         `DELETE FROM agent_messages 
-             WHERE "agentId" = $1 AND telegram_user_id = $2 
+             WHERE agent_id = $1 AND telegram_user_id = $2 
              AND id NOT IN (${idsToKeep.map((_, i) => `$${i + 3}`).join(', ')})`,
                         [this.agentId, telegramUserId, ...idsToKeep]
                     );
@@ -179,11 +179,11 @@ ${existingSummary ? `\n\nПредыдущее резюме:\n${existingSummary}`
 
     async clearHistory(telegramUserId: number): Promise<void> {
         await query(
-            `DELETE FROM agent_messages WHERE "agentId" = $1 AND telegram_user_id = $2`,
+            `DELETE FROM agent_messages WHERE agent_id = $1 AND telegram_user_id = $2`,
             [this.agentId, telegramUserId]
         );
         await query(
-            `DELETE FROM agent_summaries WHERE "agentId" = $1 AND telegram_user_id = $2`,
+            `DELETE FROM agent_summaries WHERE agent_id = $1 AND telegram_user_id = $2`,
             [this.agentId, telegramUserId]
         );
     }
