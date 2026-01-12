@@ -12,15 +12,15 @@ export interface TextChunk {
 }
 
 export interface SmartSplitterOptions {
-    maxChunkSize?: number;      // Max characters per chunk (default: 800)
+    maxChunkSize?: number;      // Max characters per chunk (default: 2000)
     overlapSentences?: number;  // Number of sentences to overlap (default: 1)
-    minChunkSize?: number;      // Min characters for a chunk (default: 100)
+    minChunkSize?: number;      // Min characters for a chunk (default: 1000)
 }
 
 const DEFAULT_OPTIONS: Required<SmartSplitterOptions> = {
-    maxChunkSize: 800,
+    maxChunkSize: 2000,
     overlapSentences: 1,
-    minChunkSize: 100,
+    minChunkSize: 1000,
 };
 
 /**

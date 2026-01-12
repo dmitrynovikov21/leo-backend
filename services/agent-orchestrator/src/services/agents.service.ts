@@ -43,11 +43,41 @@ function generateCuid(): string {
 }
 
 class AgentsService {
-    async getAgentsByUser(userId: string): Promise<Agent[]> {
+    async getAgentsByUser(userId: string): Promise<(Agent & { total_dialogs: number; dialogs_today: number })[]> {
         const agents = await query<Agent>(
             `SELECT * FROM agents WHERE "userId" = $1 ORDER BY created_at DESC`,
             [userId]
         );
+
+        if (agents.length === 0) {
+            return [];
+        }
+
+        const agentIds = agents.map(a => a.id);
+
+        // Fetch stats for all agents in one query
+        const statsRows = await query<{
+            agent_id: string;
+            total_dialogs: string;
+            dialogs_today: string;
+        }>(
+            `SELECT 
+                a.id as agent_id,
+                COALESCE((SELECT COUNT(DISTINCT telegram_user_id) FROM agent_messages WHERE agent_id = a.id AND (is_test IS NULL OR is_test = false)), 0) as total_dialogs,
+                COALESCE((SELECT COUNT(DISTINCT telegram_user_id) FROM agent_messages WHERE agent_id = a.id AND created_at >= CURRENT_DATE AND (is_test IS NULL OR is_test = false)), 0) as dialogs_today
+            FROM agents a
+            WHERE a.id = ANY($1)`,
+            [agentIds]
+        );
+
+        // Build stats map
+        const statsMap = new Map<string, { total_dialogs: number; dialogs_today: number }>();
+        for (const row of statsRows) {
+            statsMap.set(row.agent_id, {
+                total_dialogs: parseInt(row.total_dialogs || '0', 10),
+                dialogs_today: parseInt(row.dialogs_today || '0', 10),
+            });
+        }
 
         // Sync status for all agents
         // We do this in parallel but be careful with load.
@@ -79,7 +109,12 @@ class AgentsService {
             }
         }));
 
-        return agents;
+        // Merge agents with stats
+        return agents.map(agent => ({
+            ...agent,
+            total_dialogs: statsMap.get(agent.id)?.total_dialogs ?? 0,
+            dialogs_today: statsMap.get(agent.id)?.dialogs_today ?? 0,
+        }));
     }
 
     async getAgentById(id: string): Promise<Agent | null> {

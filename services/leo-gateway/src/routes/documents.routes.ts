@@ -38,7 +38,7 @@ const upload = multer({
 router.post('/parse', upload.single('file'), async (req: Request, res: Response) => {
     try {
         const file = req.file;
-        const maxChunkSize = parseInt(req.body.chunkSize) || 800;
+        const maxChunkSize = parseInt(req.body.chunkSize) || 2000;
 
         if (!file) {
             return res.status(400).json({ error: 'No file provided' });
@@ -416,6 +416,40 @@ router.delete('/:agentId', async (req: Request, res: Response) => {
         console.error('Delete knowledge base error:', error.message);
         return res.status(500).json({
             error: 'Failed to delete knowledge base',
+            message: error.message,
+        });
+    }
+});
+
+// Delete documents by source (for notes cleanup)
+router.post('/delete-by-source', async (req: Request, res: Response) => {
+    try {
+        const schema = z.object({
+            agentId: z.string(),
+            source: z.string(),
+        });
+
+        const parsed = schema.safeParse(req.body);
+
+        if (!parsed.success) {
+            return res.status(400).json({
+                error: 'Validation error',
+                details: parsed.error.flatten().fieldErrors,
+            });
+        }
+
+        const { agentId, source } = parsed.data;
+
+        await chromaService.deleteDocuments(agentId, { source });
+
+        return res.json({
+            success: true,
+            message: `Documents with source ${source} deleted for agent ${agentId}`,
+        });
+    } catch (error: any) {
+        console.error('Delete by source error:', error.message);
+        return res.status(500).json({
+            error: 'Failed to delete documents by source',
             message: error.message,
         });
     }
