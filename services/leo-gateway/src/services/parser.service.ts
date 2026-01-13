@@ -1,6 +1,7 @@
 import mammoth from 'mammoth';
 import * as xlsx from 'xlsx';
 import pdf from 'pdf-parse';
+import { extractTextFromImage, IMAGE_MIME_TYPES } from './ocr.service';
 
 export interface ParsedDocument {
     text: string;      // raw text for new /parse endpoint
@@ -21,6 +22,16 @@ export interface DocumentChunk {
 
 const CHUNK_SIZE = 1000; // characters
 const CHUNK_OVERLAP = 200;
+
+/**
+ * Parse image file using OCR
+ */
+export async function parseImage(buffer: Buffer, filename: string, mimeType: string): Promise<ParsedDocument> {
+    console.log(`🖼️ Parsing image: ${filename}`);
+    const content = await extractTextFromImage(buffer);
+    const chunks = splitIntoChunks(content, filename, mimeType);
+    return { text: content, content, chunks };
+}
 
 function splitIntoChunks(text: string, source: string, mimeType: string): DocumentChunk[] {
     const chunks: DocumentChunk[] = [];
@@ -95,6 +106,11 @@ export async function parseDocument(
     filename: string,
     mimeType: string
 ): Promise<ParsedDocument> {
+    // Check if it's an image - use OCR
+    if (IMAGE_MIME_TYPES.includes(mimeType)) {
+        return parseImage(buffer, filename, mimeType);
+    }
+
     switch (mimeType) {
         case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
         case 'application/msword':
@@ -116,3 +132,4 @@ export async function parseDocument(
             return parseText(buffer, filename);
     }
 }
+

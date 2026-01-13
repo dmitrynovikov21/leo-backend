@@ -24,6 +24,14 @@ const upload = multer({
             'application/vnd.ms-excel',
             'text/plain',
             'text/markdown',
+            // Images for OCR
+            'image/png',
+            'image/jpeg',
+            'image/jpg',
+            'image/webp',
+            'image/bmp',
+            'image/tiff',
+            'image/gif',
         ];
 
         if (allowedMimes.includes(file.mimetype)) {
