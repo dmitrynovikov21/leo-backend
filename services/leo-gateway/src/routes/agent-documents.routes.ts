@@ -4,13 +4,15 @@ import { chromaService } from '../services/chroma.service';
 
 const router = Router({ mergeParams: true }); // Enable access to params from parent router if needed
 
-// 1. Get list of documents for an agent
+// 1. Get list of documents for an agent (with optional filename search)
 router.get('/:agentId/documents', async (req: Request, res: Response) => {
     try {
         const { agentId } = req.params;
+        const { filename: searchFilename } = req.query;
 
         // Fetch documents from knowledge_bases table
         // We cast columns to match the requested format
+        // If filename query param is provided, filter by partial match (case-insensitive)
         const documents = await query<{
             id: string;
             filename: string;
@@ -19,17 +21,28 @@ router.get('/:agentId/documents', async (req: Request, res: Response) => {
             created_at: Date;
             status: string;
         }>(
-            `SELECT 
-                id, 
-                filename, 
-                "mimeType" as mime_type, 
-                "fileSize" as file_size, 
-                created_at, 
-                status 
-             FROM knowledge_bases 
-             WHERE "agentId" = $1 
-             ORDER BY created_at DESC`,
-            [agentId]
+            searchFilename
+                ? `SELECT 
+                    id, 
+                    filename, 
+                    "mimeType" as mime_type, 
+                    "fileSize" as file_size, 
+                    created_at, 
+                    status 
+                 FROM knowledge_bases 
+                 WHERE "agentId" = $1 AND filename ILIKE $2
+                 ORDER BY created_at DESC`
+                : `SELECT 
+                    id, 
+                    filename, 
+                    "mimeType" as mime_type, 
+                    "fileSize" as file_size, 
+                    created_at, 
+                    status 
+                 FROM knowledge_bases 
+                 WHERE "agentId" = $1 
+                 ORDER BY created_at DESC`,
+            searchFilename ? [agentId, `%${searchFilename}%`] : [agentId]
         );
 
         // Map to response format
