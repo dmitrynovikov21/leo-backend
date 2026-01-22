@@ -10,6 +10,7 @@ import agentPromptRoutes from './routes/agent-prompt.routes';
 import documentsRoutes from './routes/documents.routes';
 import agentDocumentsRoutes from './routes/agent-documents.routes';
 import agentChatRoutes from './routes/agent-chat.routes';
+import systemPromptRoutes from './routes/system-prompt.routes';
 
 const app = express();
 
@@ -36,6 +37,8 @@ app.use('/api/v1/generate-agent-prompt', agentPromptRoutes);
 app.use('/api/v1/documents', documentsRoutes);
 app.use('/api/v1/agents', agentDocumentsRoutes);
 app.use('/api/v1/agents', agentChatRoutes);  // Agent chat testing API
+app.use('/api/v1/system-prompts', systemPromptRoutes);
+app.use('/api/v1', systemPromptRoutes);  // For /api/v1/agents/:agentId/prompt-preview
 
 // Error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

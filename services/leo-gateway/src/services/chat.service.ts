@@ -7,6 +7,7 @@
 import { query, queryOne } from '../db';
 import { litellmService, ChatMessage } from './litellm.service';
 import { hybridSearchService } from './hybrid-search.service';
+import { PLATFORM_CORE_PROMPT } from '../constants/prompts';
 
 export type MessageType = 'HUMAN' | 'AI' | 'SYSTEM';
 
@@ -69,11 +70,17 @@ class ChatService {
         if (!agent) return null;
 
         // Build full system prompt with behavior settings
-        let fullPrompt = agent.systemPrompt || 'You are a helpful assistant.';
+        // Start with platform-level instructions
+        let fullPrompt = PLATFORM_CORE_PROMPT;
 
-        // Prepend identity instruction if displayName is set
+        // Add agent identity
         if (agent.display_name) {
-            fullPrompt = `Ты — ${agent.display_name}.\n\n${fullPrompt}`;
+            fullPrompt += `\n\nТы — ${agent.display_name}.`;
+        }
+
+        // Add agent-specific system prompt
+        if (agent.systemPrompt) {
+            fullPrompt += `\n\n${agent.systemPrompt}`;
         }
 
         // Add tone instructions
@@ -170,11 +177,34 @@ class ChatService {
         }
     }
 
+    /**
+     * Get all notes for an agent (for priority injection)
+     * Notes are added at the END of the prompt for recency bias
+     */
+    async getAgentNotes(agentId: string): Promise<string | null> {
+        try {
+            const notes = await query<{ title: string; content: string }>(
+                `SELECT title, content FROM agent_notes WHERE agent_id = $1 ORDER BY updated_at DESC`,
+                [agentId]
+            );
+
+            if (notes.length === 0) return null;
+
+            return notes
+                .map(n => `### ${n.title}\n${n.content}`)
+                .join('\n\n');
+        } catch (error) {
+            console.error('Get notes error:', error);
+            return null;
+        }
+    }
+
     buildMessages(
         systemPrompt: string,
         summary: string | null,
         recentMessages: StoredMessage[],
-        ragContext: string | null
+        ragContext: string | null,
+        notesContext: string | null = null
     ): ChatMessage[] {
         const messages: ChatMessage[] = [];
 
@@ -184,8 +214,14 @@ class ChatService {
             system += `\n\n# КРАТКОЕ РЕЗЮМЕ ПРЕДЫДУЩЕГО ДИАЛОГА:\n${summary}`;
         }
 
+        // RAG context from files (lower priority)
         if (ragContext) {
             system += `\n\n# РЕЛЕВАНТНАЯ ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ:\n${ragContext}`;
+        }
+
+        // Notes at the END for recency bias (HIGH PRIORITY)
+        if (notesContext) {
+            system += `\n\n# IMPORTANT UPDATES (High Priority):\n${notesContext}`;
         }
 
         messages.push({ role: 'system', content: system });
@@ -228,12 +264,19 @@ class ChatService {
             console.log(`📚 [${agentId}] Found relevant documents for test session`);
         }
 
+        // Get agent notes (HIGH PRIORITY - added at end of prompt)
+        const notesContext = await this.getAgentNotes(agentId);
+        if (notesContext) {
+            console.log(`📝 [${agentId}] Found notes for priority injection`);
+        }
+
         // Build chat messages
         const chatMessages = this.buildMessages(
             agentConfig.systemPrompt,
             memoryContext.summary,
             memoryContext.recentMessages,
-            ragContext
+            ragContext,
+            notesContext
         );
 
         // Note: current message is already in recentMessages (saved above)
