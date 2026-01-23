@@ -44,6 +44,9 @@ router.post('/:agentId/chat', async (req: Request, res: Response) => {
 
     } catch (error: any) {
         console.error('Chat error:', error.message);
+        if (error.response?.data) {
+            console.error('Error details:', JSON.stringify(error.response.data, null, 2));
+        }
 
         if (error.message.includes('not found')) {
             return res.status(404).json({

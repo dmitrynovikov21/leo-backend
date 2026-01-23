@@ -5,17 +5,18 @@
  */
 
 import { query, queryOne } from '../db';
-import { litellmService, ChatMessage } from './litellm.service';
+import { litellmService, ChatMessage, ToolCall } from './litellm.service';
 import { hybridSearchService } from './hybrid-search.service';
 import { PLATFORM_CORE_PROMPT } from '../constants/prompts';
+import { agentTools, executeReportConflict, ReportConflictParams } from './agent-tools.service';
 
-export type MessageType = 'HUMAN' | 'AI' | 'SYSTEM';
+export type MessageType = 'HUMAN' | 'AI' | 'SYSTEM' | 'TOOL';
 
 interface StoredMessage {
     id: string;
     agentId: string;
     sessionId: string;
-    messageType: MessageType;
+    messageType: string; // broadened from MessageType to support tool messages
     content: string;
     createdAt: Date;
 }
@@ -96,6 +97,20 @@ class ChatService {
             }
         }
 
+        // Add conflict detection protocol
+        fullPrompt += `
+
+## ПРОТОКОЛ ОБНАРУЖЕНИЯ КОНФЛИКТОВ
+При анализе предоставленного контекста (РЕЛЕВАНТНАЯ ИНФОРМАЦИЯ и IMPORTANT UPDATES):
+1. **ВНИМАТЕЛЬНО СРАВНИВАЙ** факты, цифры, цены, даты и условия из разных фрагментов.
+2. ЕСЛИ ты видишь разные значения для одного и того же факта (например, в одном месте "цена 100", в другом "цена 200"):
+   - НЕ пытайся угадать, какое значение правильное (даже если написано High Priority).
+   - НЕ выбирай значение случайно.
+   - **НЕМЕДЛЕННО** вызови инструмент \`report_conflict\`!
+   - В аргументах вызова укажи найденные противоречивые значения и их источники (номера фрагментов [1], [2] и т.д.).
+   - В ответе пользователю напиши: "Я вижу противоречивую информацию в базе знаний: в одном месте указано X, а в другом Y."
+`;
+
         return {
             systemPrompt: fullPrompt,
             name: agent.name,
@@ -103,14 +118,18 @@ class ChatService {
         };
     }
 
-    async saveMessage(agentId: string, sessionId: string, messageType: MessageType, content: string, isTest: boolean = false): Promise<void> {
+    async saveMessage(agentId: string, sessionId: string, messageType: string, content: string | null, isTest: boolean = false): Promise<void> {
         const id = generateId();
         const numericUserId = sessionToUserId(sessionId);
+
+        // Store null content as empty string for DB safety 
+        // (though in reality we might want to support nulls or JSON for tool calls)
+        const safeContent = content || '';
 
         await query(
             `INSERT INTO agent_messages (id, agent_id, telegram_user_id, message_type, content, is_test, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-            [id, agentId, numericUserId, messageType, content, isTest]
+            [id, agentId, numericUserId, messageType, safeContent, isTest]
         );
     }
 
@@ -121,13 +140,15 @@ class ChatService {
             id: string;
             agent_id: string;
             telegram_user_id: string;
-            message_type: MessageType;
+            message_type: string;
             content: string;
             created_at: Date;
         }>(
             `SELECT id, agent_id, telegram_user_id, message_type, content, created_at
              FROM agent_messages
              WHERE agent_id = $1 AND telegram_user_id = $2
+               -- Exclude tool messages from simple history for now as chat UI might not support them yet
+               AND message_type IN ('HUMAN', 'AI') 
              ORDER BY created_at DESC
              LIMIT $3`,
             [agentId, numericUserId, limit]
@@ -169,8 +190,16 @@ class ChatService {
             if (results.length === 0) return null;
 
             return results
-                .map((r, i) => `[${i + 1}] ${r.content}`)
-                .join('\n\n');
+                .map((r, i) => {
+                    const id = r.metadata?.knowledgeBaseId || r.metadata?.id || 'unknown';
+                    const filename = r.metadata?.source || r.metadata?.filename || 'Unknown File';
+
+                    return `DOCUMENT [${i + 1}]
+File ID: ${id}
+Filename: ${filename}
+Content: ${r.content}`;
+                })
+                .join('\n\n---\n\n');
         } catch (error) {
             console.error('Hybrid search error:', error);
             return null;
@@ -183,16 +212,19 @@ class ChatService {
      */
     async getAgentNotes(agentId: string): Promise<string | null> {
         try {
-            const notes = await query<{ title: string; content: string }>(
-                `SELECT title, content FROM agent_notes WHERE agent_id = $1 ORDER BY updated_at DESC`,
+            const notes = await query<{ id: string; title: string; content: string }>(
+                `SELECT id, title, content FROM agent_notes WHERE agent_id = $1 ORDER BY updated_at DESC`,
                 [agentId]
             );
 
             if (notes.length === 0) return null;
 
             return notes
-                .map(n => `### ${n.title}\n${n.content}`)
-                .join('\n\n');
+                .map(n => `NOTE
+Note ID: ${n.id}
+Title: ${n.title}
+Content: ${n.content}`)
+                .join('\n\n---\n\n');
         } catch (error) {
             console.error('Get notes error:', error);
             return null;
@@ -237,6 +269,25 @@ class ChatService {
         return messages;
     }
 
+    private async executeTool(agentId: string, sessionId: string, toolCall: ToolCall): Promise<string> {
+        const { name, arguments: argsStr } = toolCall.function;
+
+        try {
+            const args = JSON.parse(argsStr);
+
+            switch (name) {
+                case 'report_conflict':
+                    // Pass chatId (which is sessionId here) to log conflict properly
+                    return await executeReportConflict(agentId, args as ReportConflictParams, sessionId);
+                default:
+                    return `Unknown tool: ${name}`;
+            }
+        } catch (error: any) {
+            console.error(`Tool execution error (${name}):`, error.message);
+            return `Tool error: ${error.message}`;
+        }
+    }
+
     async processMessage(
         agentId: string,
         sessionId: string | null,
@@ -264,7 +315,7 @@ class ChatService {
             console.log(`📚 [${agentId}] Found relevant documents for test session`);
         }
 
-        // Get agent notes (HIGH PRIORITY - added at end of prompt)
+        // Get agent notes
         const notesContext = await this.getAgentNotes(agentId);
         if (notesContext) {
             console.log(`📝 [${agentId}] Found notes for priority injection`);
@@ -279,16 +330,61 @@ class ChatService {
             notesContext
         );
 
-        // Note: current message is already in recentMessages (saved above)
+        // Add current user message
+        chatMessages.push({ role: 'user', content: message });
 
-        // Get LLM response
+        // First LLM Call with tools
         const response = await litellmService.chatCompletion({
             model: 'claude-haiku-4',
             messages: chatMessages,
             temperature: agentConfig.temperature,
+            tools: agentTools,
+            tool_choice: 'auto',
         });
 
-        const aiResponse = response.choices[0]?.message?.content || 'No response';
+        const choice = response.choices[0];
+        let aiResponse = choice.message?.content || '';
+
+        // Handle Tool Calls
+        if (choice.finish_reason === 'tool_calls' || choice.message.tool_calls) {
+            const toolCalls = choice.message.tool_calls || [];
+            console.log(`🔧 [${agentId}] LLM requested ${toolCalls.length} tool call(s) in Gateway`);
+
+            // Add assistant message with tool calls
+            const assistantMessage: ChatMessage = {
+                role: 'assistant',
+                content: choice.message.content,
+                tool_calls: toolCalls,
+            };
+
+            const updatedMessages = [...chatMessages, assistantMessage];
+
+            // Execute tools
+            for (const toolCall of toolCalls) {
+                console.log(`   Executing: ${toolCall.function.name}`);
+                const result = await this.executeTool(agentId, finalSessionId, toolCall);
+
+                updatedMessages.push({
+                    role: 'tool',
+                    content: result,
+                    tool_call_id: toolCall.id,
+                });
+            }
+
+            // Follow-up LLM Call
+            const followUpResponse = await litellmService.chatCompletion({
+                model: 'claude-haiku-4',
+                messages: updatedMessages,
+                temperature: agentConfig.temperature,
+                tools: agentTools, // Required by Anthropic when tool messages are present
+            });
+
+            aiResponse = followUpResponse.choices[0]?.message?.content || 'No response after tools';
+        }
+
+        if (!aiResponse && !choice.message.tool_calls) {
+            aiResponse = 'No response';
+        }
 
         // Save AI response
         await this.saveMessage(agentId, finalSessionId, 'AI', aiResponse, isTest);

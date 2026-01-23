@@ -152,6 +152,73 @@ router.get('/:agentId/documents/:docId', async (req: Request, res: Response) => 
     }
 });
 
+// 4. Update chunk content
+router.patch('/:agentId/documents/:docId/chunks/:chunkId', async (req: Request, res: Response) => {
+    try {
+        const { agentId, docId, chunkId } = req.params;
+        const { text } = req.body;
+
+        if (!text || typeof text !== 'string') {
+            return res.status(400).json({ error: 'Missing or invalid "text" field' });
+        }
+
+        // Verify chunk belongs to this document and agent
+        const chunk = await queryOne<{
+            id: string;
+            knowledge_base_id: string;
+            chunk_index: number;
+            filename: string;
+        }>(
+            `SELECT dc.id, dc."knowledgeBaseId" as knowledge_base_id, dc.chunk_index, kb.filename
+             FROM document_chunks dc
+             JOIN knowledge_bases kb ON kb.id = dc."knowledgeBaseId"
+             WHERE dc.id = $1 AND kb.id = $2 AND kb."agentId" = $3`,
+            [chunkId, docId, agentId]
+        );
+
+        if (!chunk) {
+            return res.status(404).json({ error: 'Chunk not found or access denied' });
+        }
+
+        // Update chunk content in DB
+        await query(
+            `UPDATE document_chunks SET content = $1, updated_at = NOW() WHERE id = $2`,
+            [text, chunkId]
+        );
+
+        // Re-vectorize: regenerate embedding and update in ChromaDB
+        try {
+            // Find the actual Vector ID in Chroma (it's NOT the PG chunkId)
+            const chromaVectorId = await chromaService.findVectorId(
+                agentId,
+                chunk.knowledge_base_id,
+                chunk.chunk_index,
+                chunk.filename || ''
+            );
+
+            if (chromaVectorId) {
+                await chromaService.updateDocument(agentId, chromaVectorId, text);
+                console.log(`✅ Updated chunk ${chunkId} (Vector: ${chromaVectorId}) in ChromaDB`);
+            } else {
+                console.warn(`⚠️ Could not find vector for chunk ${chunkId} in ChromaDB. Skipped vector update.`);
+            }
+        } catch (chromaError: any) {
+            console.warn(`⚠️ ChromaDB update failed for chunk ${chunkId}:`, chromaError.message);
+            // Continue - DB is updated, Chroma will be out of sync but not critical
+        }
+
+        return res.status(200).json({
+            success: true,
+            chunkId,
+            message: 'Chunk updated successfully'
+        });
+
+    } catch (error: any) {
+        console.error('Update chunk error:', error.message);
+        return res.status(500).json({ error: 'Failed to update chunk' });
+    }
+});
+
 // Helper to format size
 function formatSize(bytes: number): string {
     if (bytes === 0) return '0 B';

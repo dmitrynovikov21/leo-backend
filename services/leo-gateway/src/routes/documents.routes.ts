@@ -184,6 +184,15 @@ router.post('/vectorize', async (req: Request, res: Response) => {
             );
         }
 
+        // Save to knowledge_bases table
+        const kbId = crypto.randomUUID();
+
+        await query(
+            `INSERT INTO knowledge_bases (id, "agentId", filename, "fileUrl", "fileSize", "mimeType", created_at, updated_at, status)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), 'VECTORIZED')`,
+            [kbId, agentId, filename, `chroma://agent_${agentId}`, finalFileSize, finalMimeType]
+        );
+
         // Convert to DocumentChunk format for Chroma
         const documentChunks = chunks.map((chunk, i) => ({
             id: `${agentId}_${filename}_${chunk.index}_${Date.now()}`,
@@ -194,6 +203,7 @@ router.post('/vectorize', async (req: Request, res: Response) => {
                 mimeType: finalMimeType,
                 agentId,
                 userId,
+                knowledgeBaseId: kbId,
             },
         }));
 
@@ -201,15 +211,6 @@ router.post('/vectorize', async (req: Request, res: Response) => {
         await chromaService.addDocuments(agentId, documentChunks);
 
         console.log(`✅ Added ${chunks.length} vectors to Chroma collection agent_${agentId}`);
-
-        // Save to knowledge_bases table
-        const kbId = crypto.randomUUID();
-
-        await query(
-            `INSERT INTO knowledge_bases (id, "agentId", filename, "fileUrl", "fileSize", "mimeType", created_at, updated_at, status)
-             VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), 'VECTORIZED')`,
-            [kbId, agentId, filename, `chroma://agent_${agentId}`, finalFileSize, finalMimeType]
-        );
 
         // Save chunks to document_chunks table
         // We use a transaction conceptually, but here sequential inserts for simplicity

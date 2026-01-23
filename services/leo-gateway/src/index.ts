@@ -11,6 +11,7 @@ import documentsRoutes from './routes/documents.routes';
 import agentDocumentsRoutes from './routes/agent-documents.routes';
 import agentChatRoutes from './routes/agent-chat.routes';
 import systemPromptRoutes from './routes/system-prompt.routes';
+import conflictsRoutes from './routes/conflicts.routes';
 
 const app = express();
 
@@ -39,6 +40,7 @@ app.use('/api/v1/agents', agentDocumentsRoutes);
 app.use('/api/v1/agents', agentChatRoutes);  // Agent chat testing API
 app.use('/api/v1/system-prompts', systemPromptRoutes);
 app.use('/api/v1', systemPromptRoutes);  // For /api/v1/agents/:agentId/prompt-preview
+app.use('/api/v1/conflicts', conflictsRoutes);
 
 // Error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

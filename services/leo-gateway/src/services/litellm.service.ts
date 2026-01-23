@@ -3,9 +3,20 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { config } from '../config';
 
+export interface ToolCall {
+    id: string;
+    type: 'function';
+    function: {
+        name: string;
+        arguments: string;
+    };
+}
+
 export interface ChatMessage {
-    role: 'system' | 'user' | 'assistant';
-    content: string;
+    role: 'system' | 'user' | 'assistant' | 'tool';
+    content: string | null;
+    tool_calls?: ToolCall[];
+    tool_call_id?: string;
 }
 
 export interface ChatCompletionRequest {
@@ -13,6 +24,8 @@ export interface ChatCompletionRequest {
     messages: ChatMessage[];
     temperature?: number;
     max_tokens?: number;
+    tools?: any[];
+    tool_choice?: string;
 }
 
 export interface ChatCompletionResponse {
@@ -70,12 +83,19 @@ class LiteLLMService {
     }
 
     async chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
-        const response = await this.client.post<ChatCompletionResponse>('/chat/completions', {
+        const payload: any = {
             model: request.model || config.defaultLlmModel,
             messages: request.messages,
             temperature: request.temperature ?? 0.7,
             max_tokens: request.max_tokens ?? 2048,
-        });
+        };
+
+        if (request.tools) {
+            payload.tools = request.tools;
+            payload.tool_choice = request.tool_choice || 'auto';
+        }
+
+        const response = await this.client.post<ChatCompletionResponse>('/chat/completions', payload);
 
         return response.data;
     }
@@ -97,6 +117,7 @@ class LiteLLMService {
             max_tokens: 1024,
         });
 
+        // Safe access to content, fallback to empty string if null
         return response.choices[0]?.message?.content || '';
     }
 
@@ -121,6 +142,7 @@ class LiteLLMService {
             max_tokens: 2048,
         });
 
+        // Safe access to content, fallback to empty string if null
         return response.choices[0]?.message?.content || '';
     }
 }
