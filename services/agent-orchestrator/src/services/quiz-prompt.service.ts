@@ -1,8 +1,9 @@
 import axios from 'axios';
 import { config } from '../config';
+import { promptService } from './prompt.service';
 
 export interface QuizAnswers {
-    role: 'sales' | 'lead_qualification' | 'support' | 'info_consultant';
+    role: 'sales' | 'lead_qualification' | 'support' | 'info_consultant' | 'corporate_bot' | string;
 
     // Sales-specific
     salesCta?: 'meeting' | 'payment' | 'phone' | 'custom';
@@ -34,12 +35,45 @@ export interface QuizAnswers {
     toneOfVoiceCustom?: string;
     responseLength?: 'concise' | 'balanced' | 'detailed' | 'custom';
     responseLengthCustom?: string;
-    fallback?: 'admit' | 'contact' | 'guess' | 'custom';
+    fallback?: 'admit' | 'contact' | 'guess' | 'manager' | 'no_info' | 'custom';
     fallbackCustom?: string;
 
     // Constraints
     constraints?: string[];
     customConstraints?: string[];
+
+    // New Corporate Bot Fields
+    identityName?: string;
+    identityPosition?: string;
+
+    audience?: 'clients' | 'employees' | 'management' | 'custom';
+    audienceCustom?: string;
+
+    strictness?: 'strict_files' | 'hybrid' | 'custom';
+    strictnessCustom?: string;
+
+    citations?: 'always' | 'on_request' | 'hidden' | 'custom';
+    citationsCustom?: string;
+
+    conflicts?: 'latest' | 'detailed' | 'report' | 'custom';
+    conflictsCustom?: string;
+
+    answerDepth?: 'concise' | 'step_by_step' | 'expert' | 'custom';
+    answerDepthCustom?: string;
+
+    format?: 'rich' | 'plain' | 'custom';
+    formatCustom?: string;
+
+    // Fallback extended
+    // Note: fallback already exists but with different values. 
+    // Typescript allows union of string literals, so we can just rely on the existing field 
+    // plus the union of new types effectively if we relax it or just treat it as string in interface if generic.
+    // However, existing is: 'admit' | 'contact' | 'guess' | 'custom'
+    // New is: 'no_info' | 'contact' | 'manager' | 'custom'
+    // So 'admit' and 'guess' are legacy? 'manager', 'no_info' are new. 'contact' is shared.
+    // I will update the type definition on line 37.
+
+    fewShot?: string;
 }
 
 export interface GeneratePromptRequest {
@@ -55,6 +89,7 @@ const ROLE_LABELS: Record<string, string> = {
     lead_qualification: 'Квалификатор лидов',
     support: 'Техподдержка',
     info_consultant: 'Информационный консультант',
+    corporate_bot: 'Корпоративный ассистент',
 };
 
 const SALES_CTA_LABELS: Record<string, string> = {
@@ -125,7 +160,49 @@ const FALLBACK_LABELS: Record<string, string> = {
     admit: 'честно признать незнание',
     contact: 'перенаправить к человеку-специалисту',
     guess: 'попытаться дать наилучший ответ',
+    manager: 'переключить на менеджера',
+    no_info: 'сообщить, что информации нет',
     custom: 'кастомная стратегия',
+};
+
+const AUDIENCE_LABELS: Record<string, string> = {
+    clients: 'клиенты',
+    employees: 'сотрудники',
+    management: 'руководство',
+    custom: 'кастомная аудитория',
+};
+
+const STRICTNESS_LABELS: Record<string, string> = {
+    strict_files: 'строго по базе знаний',
+    hybrid: 'гибридный режим (база + общие знания)',
+    custom: 'кастомная строгость',
+};
+
+const CITATIONS_LABELS: Record<string, string> = {
+    always: 'всегда приводить источники',
+    on_request: 'по запросу',
+    hidden: 'не показывать источники',
+    custom: 'кастомные цитаты',
+};
+
+const CONFLICTS_LABELS: Record<string, string> = {
+    latest: 'использовать последние данные',
+    detailed: 'детально описывать конфликт',
+    report: 'сообщать о конфликте',
+    custom: 'кастомное разрешение конфликтов',
+};
+
+const ANSWER_DEPTH_LABELS: Record<string, string> = {
+    concise: 'краткие ответы',
+    step_by_step: 'пошаговые инструкции',
+    expert: 'экспертные развернутые ответы',
+    custom: 'кастомная глубина',
+};
+
+const FORMAT_LABELS: Record<string, string> = {
+    rich: 'богатое форматирование (Markdown)',
+    plain: 'простой текст',
+    custom: 'кастомный формат',
 };
 
 const CONSTRAINT_LABELS: Record<string, string> = {
@@ -203,6 +280,38 @@ class QuizPromptService {
                     parts.push(`Реакция на оффтопик: ${offtopicValue}`);
                 }
                 break;
+            case 'corporate_bot':
+                if (answers.identityName) {
+                    parts.push(`Имя (личность): ${answers.identityName}`);
+                }
+                if (answers.identityPosition) {
+                    parts.push(`Должность: ${answers.identityPosition}`);
+                }
+                if (answers.audience) {
+                    const val = answers.audience === 'custom' ? answers.audienceCustom : AUDIENCE_LABELS[answers.audience];
+                    parts.push(`Целевая аудитория: ${val}`);
+                }
+                if (answers.strictness) {
+                    const val = answers.strictness === 'custom' ? answers.strictnessCustom : STRICTNESS_LABELS[answers.strictness];
+                    parts.push(`Строгость соблюдения базы знаний: ${val}`);
+                }
+                if (answers.citations) {
+                    const val = answers.citations === 'custom' ? answers.citationsCustom : CITATIONS_LABELS[answers.citations];
+                    parts.push(`Цитирование источников: ${val}`);
+                }
+                if (answers.conflicts) {
+                    const val = answers.conflicts === 'custom' ? answers.conflictsCustom : CONFLICTS_LABELS[answers.conflicts];
+                    parts.push(`Разрешение конфликтов данных: ${val}`);
+                }
+                if (answers.answerDepth) {
+                    const val = answers.answerDepth === 'custom' ? answers.answerDepthCustom : ANSWER_DEPTH_LABELS[answers.answerDepth];
+                    parts.push(`Глубина ответов: ${val}`);
+                }
+                if (answers.format) {
+                    const val = answers.format === 'custom' ? answers.formatCustom : FORMAT_LABELS[answers.format];
+                    parts.push(`Формат ответов: ${val}`);
+                }
+                break;
         }
 
         return parts.join('\n');
@@ -255,6 +364,13 @@ class QuizPromptService {
         return constraints.length > 0 ? `Ограничения:\n${constraints.join('\n')}` : '';
     }
 
+    private buildFewShotContext(answers: QuizAnswers): string {
+        if (answers.fewShot && answers.fewShot.trim().length > 0) {
+            return `Примеры диалогов (Few-Shot):\n${answers.fewShot}`;
+        }
+        return '';
+    }
+
     async generatePrompt(data: GeneratePromptRequest): Promise<string> {
         const { userId, agentName, agentDescription, quizAnswers } = data;
 
@@ -262,6 +378,7 @@ class QuizPromptService {
         const roleContext = this.buildRoleContext(quizAnswers.role, quizAnswers);
         const globalContext = this.buildGlobalContext(quizAnswers);
         const constraintsContext = this.buildConstraintsContext(quizAnswers);
+        const fewShotContext = this.buildFewShotContext(quizAnswers);
 
         const configContext = `
 ## Информация об агенте
@@ -274,23 +391,11 @@ ${roleContext}
 ${globalContext}
 
 ${constraintsContext}
+
+${fewShotContext}
 `.trim();
 
-        const systemPrompt = `You are an expert AI prompt engineer specializing in creating Russian-language system instructions for AI assistants.
-
-Your task is to generate a detailed, well-structured system prompt in Russian based on the configuration provided.
-
-The generated prompt should:
-1. Start with "# РОЛЬ" section describing who the AI is
-2. Include "# ЦЕЛЬ" section with the main objective
-3. Include "# СТИЛЬ ОБЩЕНИЯ" section based on tone and response length settings
-4. Include "# ПРАВИЛА" section with specific behavioral rules
-5. Include "# ОГРАНИЧЕНИЯ" section if there are any constraints
-6. Be written in natural, fluent Russian
-7. Be specific and actionable, not generic
-8. Use markdown formatting
-
-Generate ONLY the system prompt content, nothing else.`;
+        const systemPrompt = await promptService.getPrompt('quiz_meta_architect');
 
         const userMessage = `Создай системный промпт для AI-агента на основе следующей конфигурации:
 

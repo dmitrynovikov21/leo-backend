@@ -3,6 +3,7 @@ import { config } from './config';
 import { llmClient } from './llm-client';
 import { MemoryManager } from './memory/manager';
 import { scheduleChecker } from './schedule-checker';
+import { queryOne } from './db';
 
 // Debounce storage: userId -> { timeout, messages[] }
 const pendingMessages = new Map<number, {
@@ -13,11 +14,20 @@ const pendingMessages = new Map<number, {
 
 const memoryManager = new MemoryManager(config.agentId);
 
+import { promptService } from './services/prompt.service';
+
 /**
  * Build the full system prompt by combining base prompt with behavior settings
  */
-function buildFullSystemPrompt(): string {
-    let prompt = config.systemPrompt;
+async function buildFullSystemPrompt(): Promise<string> {
+    // Start with platform core prompt
+    const platformCore = await promptService.getPrompt('platform_core');
+    let prompt = platformCore;
+
+    // Add agent-specific system prompt
+    if (config.systemPrompt) {
+        prompt += `\n\n${config.systemPrompt}`;
+    }
 
     // Prepend identity instruction if displayName is set
     if (config.identityInstruction) {
@@ -37,24 +47,25 @@ function buildFullSystemPrompt(): string {
         }
     }
 
-    // Add conflict detection protocol
-    prompt += `
-
-## ПРОТОКОЛ ОБНАРУЖЕНИЯ КОНФЛИКТОВ
-При анализе предоставленного контекста (РЕЛЕВАНТНАЯ ИНФОРМАЦИЯ и IMPORTANT UPDATES):
-1. **ВНИМАТЕЛЬНО СРАВНИВАЙ** факты, цифры, цены, даты и условия из разных фрагментов.
-2. ЕСЛИ ты видишь разные значения для одного и того же факта (например, в одном месте "цена 100", в другом "цена 200"):
-   - НЕ пытайся угадать, какое значение правильное (даже если написано High Priority).
-   - НЕ выбирай значение случайно.
-   - **НЕМЕДЛЕННО** вызови инструмент \`report_conflict\`!
-   - В аргументах вызова укажи найденные противоречивые значения и их источники (File ID из контекста, если есть, или номера фрагментов).
-   - В ответе пользователю напиши: "Я вижу противоречивую информацию в базе знаний: в одном месте указано X, а в другом Y."`;
+    // Add conflict detection protocol from DB
+    const conflictProtocol = await promptService.getPrompt('conflict_detection_protocol');
+    if (conflictProtocol) {
+        prompt += `\n\n${conflictProtocol}`;
+    }
 
     return prompt;
 }
 
-// Cache the full system prompt
-const fullSystemPrompt = buildFullSystemPrompt();
+// Cache for the full system prompt (initialized on first use)
+let fullSystemPrompt: string | null = null;
+
+async function getFullSystemPrompt(): Promise<string> {
+    if (fullSystemPrompt === null) {
+        fullSystemPrompt = await buildFullSystemPrompt();
+        console.log('✅ System prompt initialized from DB');
+    }
+    return fullSystemPrompt;
+}
 
 async function processMessages(userId: number, messages: string[], ctx: Context): Promise<void> {
     const combinedMessage = messages.join('\n');
@@ -97,7 +108,7 @@ Content: ${r.content}`;
 
         // Get schedule description for system prompt
         const scheduleDescription = await scheduleChecker.getScheduleDescription();
-        let enrichedPrompt = fullSystemPrompt;
+        let enrichedPrompt = await getFullSystemPrompt();
         if (scheduleDescription) {
             enrichedPrompt += '\n\n' + scheduleDescription;
         }

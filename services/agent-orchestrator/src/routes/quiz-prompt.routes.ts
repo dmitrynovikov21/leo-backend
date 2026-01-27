@@ -6,7 +6,7 @@ const router = Router();
 
 // Validation schema
 const quizAnswersSchema = z.object({
-    role: z.enum(['sales', 'lead_qualification', 'support', 'info_consultant']),
+    role: z.string(),
 
     // Sales-specific
     salesCta: z.enum(['meeting', 'payment', 'phone', 'custom']).optional(),
@@ -33,16 +33,33 @@ const quizAnswersSchema = z.object({
     infoOfftopic: z.enum(['ignore', 'polite', 'custom']).optional(),
     infoOfftopicCustom: z.string().optional(),
 
+    // Corporate Bot (New)
+    identityName: z.string().optional(),
+    identityPosition: z.string().optional(),
+    audience: z.enum(['employees', 'clients', 'management', 'custom']).optional(),
+    audienceCustom: z.string().optional(),
+    strictness: z.enum(['strict_files', 'hybrid', 'custom']).optional(),
+    strictnessCustom: z.string().optional(),
+    citations: z.enum(['always', 'on_request', 'hidden', 'custom']).optional(),
+    citationsCustom: z.string().optional(),
+    conflicts: z.enum(['latest', 'detailed', 'report', 'custom']).optional(),
+    conflictsCustom: z.string().optional(),
+    answerDepth: z.enum(['concise', 'step_by_step', 'expert', 'custom']).optional(),
+    answerDepthCustom: z.string().optional(),
+    format: z.enum(['rich', 'plain', 'custom']).optional(),
+    formatCustom: z.string().optional(),
+    fewShot: z.string().optional(),
+
     // Global settings
     toneOfVoice: z.enum(['official', 'friendly', 'casual', 'custom']).optional(),
     toneOfVoiceCustom: z.string().optional(),
     responseLength: z.enum(['concise', 'balanced', 'detailed', 'custom']).optional(),
     responseLengthCustom: z.string().optional(),
-    fallback: z.enum(['admit', 'contact', 'guess', 'custom']).optional(),
+    fallback: z.enum(['admit', 'contact', 'guess', 'manager', 'no_info', 'custom']).optional(),
     fallbackCustom: z.string().optional(),
 
     // Constraints
-    constraints: z.array(z.enum(['no_swearing', 'no_prices', 'no_competitors', 'no_hallucination'])).optional(),
+    constraints: z.array(z.string()).optional(),
     customConstraints: z.array(z.string()).optional(),
 });
 

@@ -7,7 +7,7 @@
 import { query, queryOne } from '../db';
 import { litellmService, ChatMessage, ToolCall } from './litellm.service';
 import { hybridSearchService } from './hybrid-search.service';
-import { PLATFORM_CORE_PROMPT } from '../constants/prompts';
+import { promptService } from './prompt.service';
 import { agentTools, executeReportConflict, ReportConflictParams } from './agent-tools.service';
 
 export type MessageType = 'HUMAN' | 'AI' | 'SYSTEM' | 'TOOL';
@@ -72,7 +72,7 @@ class ChatService {
 
         // Build full system prompt with behavior settings
         // Start with platform-level instructions
-        let fullPrompt = PLATFORM_CORE_PROMPT;
+        let fullPrompt = await promptService.getPrompt('platform_core');
 
         // Add agent identity
         if (agent.display_name) {
@@ -98,18 +98,7 @@ class ChatService {
         }
 
         // Add conflict detection protocol
-        fullPrompt += `
-
-## ПРОТОКОЛ ОБНАРУЖЕНИЯ КОНФЛИКТОВ
-При анализе предоставленного контекста (РЕЛЕВАНТНАЯ ИНФОРМАЦИЯ и IMPORTANT UPDATES):
-1. **ВНИМАТЕЛЬНО СРАВНИВАЙ** факты, цифры, цены, даты и условия из разных фрагментов.
-2. ЕСЛИ ты видишь разные значения для одного и того же факта (например, в одном месте "цена 100", в другом "цена 200"):
-   - НЕ пытайся угадать, какое значение правильное (даже если написано High Priority).
-   - НЕ выбирай значение случайно.
-   - **НЕМЕДЛЕННО** вызови инструмент \`report_conflict\`!
-   - В аргументах вызова укажи найденные противоречивые значения и их источники (номера фрагментов [1], [2] и т.д.).
-   - В ответе пользователю напиши: "Я вижу противоречивую информацию в базе знаний: в одном месте указано X, а в другом Y."
-`;
+        fullPrompt += `\n\n${await promptService.getPrompt('conflict_detection_protocol')}`;
 
         return {
             systemPrompt: fullPrompt,

@@ -1,6 +1,7 @@
 import { query, queryOne } from '../db';
 import { config } from '../config';
 import axios from 'axios';
+import { promptService } from '../services/prompt.service';
 
 export type MessageType = 'HUMAN' | 'AI' | 'TOOL' | 'SYSTEM';
 
@@ -130,13 +131,7 @@ export class MemoryManager {
                 messages: [
                     {
                         role: 'system',
-                        content: `Ты — ассистент для суммаризации диалогов. 
-Создай краткое резюме диалога, сохраняя:
-- Ключевые темы и вопросы пользователя
-- Важные факты и решения
-- Контекст для продолжения беседы
-
-Формат: 2-3 абзаца, на русском языке.
+                        content: `${await promptService.getPrompt('summarization_template')}
 ${existingSummary ? `\n\nПредыдущее резюме:\n${existingSummary}` : ''}`,
                     },
                     {
