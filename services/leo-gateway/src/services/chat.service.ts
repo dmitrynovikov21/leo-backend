@@ -281,10 +281,15 @@ Content: ${n.content}`)
         agentId: string,
         sessionId: string | null,
         message: string,
+        explicitUserId?: string, // New optional parameter
         isTest: boolean = true
     ): Promise<{ sessionId: string; response: string; timestamp: string }> {
         // Generate session if not provided
         const finalSessionId = sessionId || generateSessionId(isTest);
+
+        // Determine user ID for logging/tracking
+        // Use explicit userId if provided, otherwise fallback to session ID
+        const trackingUserId = explicitUserId || finalSessionId;
 
         // Get agent config
         const agentConfig = await this.getAgentConfig(agentId);
@@ -324,6 +329,8 @@ Content: ${n.content}`)
 
         // First LLM Call with tools
         const response = await litellmService.chatCompletion({
+            userId: trackingUserId,
+            agentId: agentId,
             model: 'claude-haiku-4',
             messages: chatMessages,
             temperature: agentConfig.temperature,
@@ -362,6 +369,8 @@ Content: ${n.content}`)
 
             // Follow-up LLM Call
             const followUpResponse = await litellmService.chatCompletion({
+                userId: trackingUserId,
+                agentId: agentId,
                 model: 'claude-haiku-4',
                 messages: updatedMessages,
                 temperature: agentConfig.temperature,

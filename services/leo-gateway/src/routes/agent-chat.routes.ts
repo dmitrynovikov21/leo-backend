@@ -17,6 +17,7 @@ router.post('/:agentId/chat', async (req: Request, res: Response) => {
         const schema = z.object({
             message: z.string().min(1),
             session_id: z.string().optional().nullable(),
+            user_id: z.string().optional().nullable(), // Allow explicit user_id for tracking
             is_test: z.boolean().optional().default(true),
         });
 
@@ -29,14 +30,15 @@ router.post('/:agentId/chat', async (req: Request, res: Response) => {
             });
         }
 
-        const { message, session_id, is_test } = parsed.data;
+        const { message, session_id, user_id, is_test } = parsed.data;
 
-        console.log(`💬 [${agentId}] Chat request: "${message.substring(0, 50)}..." (session: ${session_id || 'new'})`);
+        console.log(`💬 [${agentId}] Chat request: "${message.substring(0, 50)}..." (session: ${session_id || 'new'}, user: ${user_id || 'anon'})`);
 
         const result = await chatService.processMessage(
             agentId,
             session_id || null,
             message,
+            user_id || undefined, // Pass explicit userId if provided
             is_test
         );
 

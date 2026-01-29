@@ -20,6 +20,8 @@ export interface ChatMessage {
 }
 
 export interface ChatCompletionRequest {
+    userId?: string;
+    agentId?: string;
     model?: string;
     messages: ChatMessage[];
     temperature?: number;
@@ -60,6 +62,7 @@ class LiteLLMService {
             baseURL: config.litellmUrl,
             headers: {
                 'Content-Type': 'application/json',
+                'Authorization': `Bearer ${config.litellmMasterKey || 'sk-1234'}`,
             },
         });
     }
@@ -88,6 +91,12 @@ class LiteLLMService {
             messages: request.messages,
             temperature: request.temperature ?? 0.7,
             max_tokens: request.max_tokens ?? 2048,
+            user: request.userId,
+            metadata: {
+                userId: request.userId,
+                agentId: request.agentId,
+                request_type: 'AGENT_CHAT'
+            }
         };
 
         if (request.tools) {

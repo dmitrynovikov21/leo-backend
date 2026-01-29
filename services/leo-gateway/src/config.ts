@@ -8,6 +8,7 @@ const envSchema = z.object({
     OPENAI_API_KEY: z.string().optional(),
     EMBEDDING_MODEL: z.string().default('text-embedding-3-small'),
     DEFAULT_LLM_MODEL: z.string().default('gpt-4o-mini'),
+    LITELLM_MASTER_KEY: z.string().optional(),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 });
 
@@ -26,6 +27,7 @@ export const config = {
     openaiApiKey: parsed.data.OPENAI_API_KEY,
     embeddingModel: parsed.data.EMBEDDING_MODEL,
     defaultLlmModel: parsed.data.DEFAULT_LLM_MODEL,
+    litellmMasterKey: parsed.data.LITELLM_MASTER_KEY,
     nodeEnv: parsed.data.NODE_ENV,
     isDev: parsed.data.NODE_ENV === 'development',
 };

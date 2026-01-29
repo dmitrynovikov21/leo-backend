@@ -26,14 +26,21 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - DATABASE_URL=postgresql://litellm:litellm_password@litellm-db:5432/litellm
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
       - UI_USERNAME=admin
       - UI_PASSWORD=admin
+      # Main database for usage logging callback
+      - LEO_DATABASE_URL=${DATABASE_URL}
+      - LEO_WEBHOOK_URL=http://leo-gateway:8080/api/v1/llm-webhook
+      # Python path for custom callbacks
+      - PYTHONPATH=/app
       # LangSmith tracing
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
       - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-leo}
       - LANGCHAIN_TRACING_V2=true
     volumes:
       - ./litellm_config.yaml:/app/config.yaml
+      - ./litellm_callbacks.py:/app/litellm_callbacks.py
     ports:
       - "127.0.0.1:4000:4000"
     depends_on:
@@ -69,6 +76,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
       - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-gpt-4o-mini}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
       - NODE_ENV=production
     ports:
       - "8080:8080"
