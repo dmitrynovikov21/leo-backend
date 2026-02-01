@@ -11,6 +11,7 @@ export interface HybridSearchResult {
     content: string;
     score: number;
     source: 'vector' | 'fts' | 'both';
+    metadata: Record<string, any>;
 }
 
 class HybridSearchService {
@@ -46,6 +47,7 @@ class HybridSearchService {
                     content: result.content,
                     score: rrfScore,
                     source: 'vector',
+                    metadata: result.metadata,
                 });
             }
         });
@@ -58,12 +60,15 @@ class HybridSearchService {
             if (existing) {
                 existing.score += rrfScore;
                 existing.source = 'both';
+                // Merge metadata if needed, or keep existing
+                existing.metadata = { ...existing.metadata, knowledgeBaseId: result.knowledgeBaseId };
             } else {
                 resultMap.set(result.content, {
                     id: result.id,
                     content: result.content,
                     score: rrfScore,
                     source: 'fts',
+                    metadata: { knowledgeBaseId: result.knowledgeBaseId },
                 });
             }
         });
@@ -81,7 +86,7 @@ class HybridSearchService {
         agentId: string,
         query: string,
         limit: number = 5
-    ): Promise<{ content: string; source: string }[]> {
+    ): Promise<{ content: string; source: string; metadata?: any }[]> {
         const ftsAvailable = await ftsService.isAvailable();
 
         if (ftsAvailable) {
@@ -89,6 +94,7 @@ class HybridSearchService {
             return results.map(r => ({
                 content: r.content,
                 source: r.source,
+                metadata: r.metadata,
             }));
         } else {
             // Fallback to vector-only search
@@ -96,6 +102,7 @@ class HybridSearchService {
             return results.map(r => ({
                 content: r.content,
                 source: 'vector',
+                metadata: r.metadata,
             }));
         }
     }

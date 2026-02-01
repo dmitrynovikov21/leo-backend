@@ -123,6 +123,73 @@ class ChromaService {
             return null;
         }
     }
+
+    async findVectorId(
+        agentId: string,
+        knowledgeBaseId: string,
+        chunkIndex: number,
+        filename: string
+    ): Promise<string | null> {
+        try {
+            const collection = await this.getOrCreateCollection(agentId);
+
+            // Try matching by knowledgeBaseId AND chunkIndex (Newer docs)
+            const resultsByKb = await collection.get({
+                where: {
+                    "$and": [
+                        { "knowledgeBaseId": { "$eq": knowledgeBaseId } },
+                        { "chunkIndex": { "$eq": chunkIndex } }
+                    ]
+                },
+                limit: 1
+            });
+
+            if (resultsByKb.ids.length > 0) {
+                return resultsByKb.ids[0];
+            }
+
+            // Fallback: Try matching by source (filename) AND chunkIndex (Older docs)
+            const resultsBySource = await collection.get({
+                where: {
+                    "$and": [
+                        { "source": { "$eq": filename } },
+                        { "chunkIndex": { "$eq": chunkIndex } }
+                    ]
+                },
+                limit: 1
+            });
+
+            if (resultsBySource.ids.length > 0) {
+                return resultsBySource.ids[0];
+            }
+
+            return null;
+        } catch (error) {
+            console.warn('Error finding vector ID:', error);
+            return null;
+        }
+    }
+
+    async updateDocument(agentId: string, chunkId: string, newContent: string): Promise<void> {
+        try {
+            const collection = await this.getOrCreateCollection(agentId);
+
+            // Generate new embedding for updated content
+            const newEmbedding = await this.getEmbeddingFunction().generate([newContent]);
+
+            // Update in ChromaDB
+            await collection.update({
+                ids: [chunkId],
+                documents: [newContent],
+                embeddings: newEmbedding,
+            });
+
+            console.log(`Updated chunk ${chunkId} in ChromaDB for agent ${agentId}`);
+        } catch (error: any) {
+            console.error(`Failed to update chunk ${chunkId} in ChromaDB:`, error.message);
+            throw error;
+        }
+    }
 }
 
 export const chromaService = new ChromaService();

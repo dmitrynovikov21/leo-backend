@@ -1,4 +1,5 @@
 import { litellmService } from './litellm.service';
+import { promptService } from './prompt.service';
 
 export interface SemanticChunk {
     index: number;
@@ -6,26 +7,7 @@ export interface SemanticChunk {
     text: string;
 }
 
-const SEMANTIC_CHUNKING_PROMPT = `Ты — эксперт по разбиению документов на смысловые части для RAG-систем.
 
-ЗАДАЧА: Разбей текст на логические смысловые блоки. Каждый блок должен быть законченной мыслью или темой.
-
-ПРАВИЛА:
-1. Каждый чанк должен содержать законченную мысль/тему
-2. Не разрывай определения, списки, связанные параграфы
-3. Оптимальный размер чанка: 500-2000 символов
-4. Сохраняй нумерацию пунктов если есть
-5. Давай короткое название каждому чанку
-
-ФОРМАТ ОТВЕТА (строгий JSON):
-{
-  "chunks": [
-    {"index": 0, "title": "Название темы", "text": "Полный текст чанка..."},
-    {"index": 1, "title": "Следующая тема", "text": "..."}
-  ]
-}
-
-ВАЖНО: Верни ТОЛЬКО валидный JSON, без markdown, без пояснений.`;
 
 export async function semanticChunking(text: string): Promise<SemanticChunk[]> {
     // For very long texts, split into manageable parts first
@@ -80,9 +62,11 @@ export async function semanticChunking(text: string): Promise<SemanticChunk[]> {
 
 async function processTextPart(text: string): Promise<SemanticChunk[]> {
     try {
+        const prompt = await promptService.getPrompt('semantic_chunking');
+
         const response = await litellmService.chatCompletion({
             messages: [
-                { role: 'system', content: SEMANTIC_CHUNKING_PROMPT },
+                { role: 'system', content: prompt },
                 { role: 'user', content: text },
             ],
             temperature: 0.3,

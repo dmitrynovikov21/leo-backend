@@ -34,6 +34,8 @@ router.post('/completions', async (req: Request, res: Response) => {
 
         const startTime = Date.now();
         const response = await litellmService.chatCompletion({
+            userId,      // Pass userId for LiteLLM logging
+            agentId,     // Pass agentId for LiteLLM logging
             model,
             messages: messages as ChatMessage[],
             temperature,
@@ -41,7 +43,8 @@ router.post('/completions', async (req: Request, res: Response) => {
         });
         const duration = Date.now() - startTime;
 
-        // Track usage
+        // Track usage - DISABLED (Relies on LiteLLM Webhook Callback to avoid double counting and get cost data)
+        /*
         if (response.usage) {
             await usageService.trackUsage(
                 userId,
@@ -53,6 +56,7 @@ router.post('/completions', async (req: Request, res: Response) => {
                 duration
             );
         }
+        */
 
         return res.json(response);
     } catch (error: any) {

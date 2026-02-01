@@ -10,6 +10,9 @@ import agentPromptRoutes from './routes/agent-prompt.routes';
 import documentsRoutes from './routes/documents.routes';
 import agentDocumentsRoutes from './routes/agent-documents.routes';
 import agentChatRoutes from './routes/agent-chat.routes';
+import systemPromptRoutes from './routes/system-prompt.routes';
+import conflictsRoutes from './routes/conflicts.routes';
+import llmWebhookRoutes from './routes/llm-webhook.routes';
 
 const app = express();
 
@@ -29,6 +32,7 @@ app.get('/health', async (req, res) => {
 });
 
 // Routes
+app.use('/api/v1', llmWebhookRoutes);
 app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/generate-persona', personaRoutes);
 app.use('/api/v1/usage', usageRoutes);
@@ -36,6 +40,9 @@ app.use('/api/v1/generate-agent-prompt', agentPromptRoutes);
 app.use('/api/v1/documents', documentsRoutes);
 app.use('/api/v1/agents', agentDocumentsRoutes);
 app.use('/api/v1/agents', agentChatRoutes);  // Agent chat testing API
+app.use('/api/v1/system-prompts', systemPromptRoutes);
+// app.use('/api/v1', systemPromptRoutes);  // Removed dangerous catch-all. If needed, mount specifically.
+app.use('/api/v1/conflicts', conflictsRoutes);
 
 // Error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

@@ -1,19 +1,51 @@
 model_list:
-  # Claude
+  # Claude Series 4.5 (Forecasted/New)
+  - model_name: claude-opus-4-5
+    litellm_params:
+      model: anthropic/claude-opus-4-5-20251101
+      api_key: os.environ/ANTHROPIC_API_KEY
+  
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+      input_cost_per_token: 0.0000008
+      output_cost_per_token: 0.000004
+
+  - model_name: claude-sonnet-4-5
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # Claude Series 4
+  - model_name: claude-opus-4
+    litellm_params:
+      model: anthropic/claude-opus-4-20250514
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-sonnet-4
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # Legacy / Current Stable
+  - model_name: claude-3-5-haiku
+    litellm_params:
+      model: anthropic/claude-3-5-haiku-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-3-5-sonnet
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # Aliases
   - model_name: claude-haiku-4
     litellm_params:
       model: anthropic/claude-haiku-4-5-20251001
       api_key: os.environ/ANTHROPIC_API_KEY
-
-  - model_name: claude-3-haiku-20240307
-    litellm_params:
-      model: anthropic/claude-3-haiku-20240307
-      api_key: os.environ/ANTHROPIC_API_KEY
-
-  - model_name: claude-3-5-sonnet-20241022
-    litellm_params:
-      model: anthropic/claude-3-5-sonnet-20241022
-      api_key: os.environ/ANTHROPIC_API_KEY
+      input_cost_per_token: 0.0000008
+      output_cost_per_token: 0.000004
 
   # OpenAI
   - model_name: gpt-4o
@@ -34,8 +66,7 @@ model_list:
 litellm_settings:
   drop_params: true
   set_verbose: false
-  success_callback: ["langsmith"]
-  failure_callback: ["langsmith"]
+  callbacks: ["langsmith", "litellm_callbacks.postgres_usage_logger"]
 
 environment_variables:
   LANGSMITH_API_KEY: os.environ/LANGSMITH_API_KEY

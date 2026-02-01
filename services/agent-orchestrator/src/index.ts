@@ -7,6 +7,7 @@ import agentsRoutes from './routes/agents.routes';
 import behaviorRoutes from './routes/behavior.routes';
 import scheduleRoutes from './routes/schedule.routes';
 import notesRoutes from './routes/notes.routes';
+import quizPromptRoutes from './routes/quiz-prompt.routes';
 
 const app = express();
 
@@ -29,6 +30,7 @@ app.use('/api/v1/agents', agentsRoutes);
 app.use('/api/v1/agents', behaviorRoutes);
 app.use('/api/v1/agents', scheduleRoutes);
 app.use('/api/v1/agents', notesRoutes);
+app.use('/api/v1', quizPromptRoutes);
 
 // Error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

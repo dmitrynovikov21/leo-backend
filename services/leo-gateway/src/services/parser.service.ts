@@ -1,6 +1,7 @@
 import mammoth from 'mammoth';
 import * as xlsx from 'xlsx';
 import pdf from 'pdf-parse';
+import { getTextExtractor } from 'office-text-extractor';
 import { extractTextFromImage, IMAGE_MIME_TYPES } from './ocr.service';
 
 export interface ParsedDocument {
@@ -101,6 +102,79 @@ export async function parseText(buffer: Buffer, filename: string): Promise<Parse
     return { text: content, content, chunks };
 }
 
+export async function parseCsv(buffer: Buffer, filename: string): Promise<ParsedDocument> {
+    // Use xlsx to parse CSV into a structured readable format
+    const workbook = xlsx.read(buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const content = xlsx.utils.sheet_to_txt(sheet);
+    const chunks = splitIntoChunks(content, filename, 'text/csv');
+
+    return { text: content, content, chunks };
+}
+
+export async function parseJson(buffer: Buffer, filename: string): Promise<ParsedDocument> {
+    const raw = buffer.toString('utf-8');
+    let content: string;
+
+    try {
+        const parsed = JSON.parse(raw);
+        content = JSON.stringify(parsed, null, 2);
+    } catch {
+        // If JSON is invalid, use raw text
+        content = raw;
+    }
+
+    const chunks = splitIntoChunks(content, filename, 'application/json');
+    return { text: content, content, chunks };
+}
+
+export async function parseHtml(buffer: Buffer, filename: string): Promise<ParsedDocument> {
+    let html = buffer.toString('utf-8');
+
+    // Remove script and style blocks with their content
+    html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
+    html = html.replace(/<style[\s\S]*?<\/style>/gi, '');
+
+    // Convert block elements to newlines
+    html = html.replace(/<\/(p|div|h[1-6]|li|tr|br|blockquote|section|article|header|footer)>/gi, '\n');
+    html = html.replace(/<br\s*\/?>/gi, '\n');
+    html = html.replace(/<\/td>/gi, '\t');
+
+    // Strip remaining tags
+    html = html.replace(/<[^>]+>/g, '');
+
+    // Decode common HTML entities
+    html = html
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&nbsp;/g, ' ');
+
+    // Clean up whitespace
+    const content = html
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0)
+        .join('\n');
+
+    const chunks = splitIntoChunks(content, filename, 'text/html');
+    return { text: content, content, chunks };
+}
+
+export async function parsePptx(buffer: Buffer, filename: string): Promise<ParsedDocument> {
+    const extractor = getTextExtractor();
+    const content = await extractor.extractText({
+        input: buffer,
+        type: 'buffer',
+    });
+    const chunks = splitIntoChunks(content, filename, 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+
+    return { text: content, content, chunks };
+}
+
 export async function parseDocument(
     buffer: Buffer,
     filename: string,
@@ -122,6 +196,20 @@ export async function parseDocument(
 
         case 'application/pdf':
             return parsePdf(buffer, filename);
+
+        case 'text/csv':
+        case 'application/csv':
+            return parseCsv(buffer, filename);
+
+        case 'application/json':
+            return parseJson(buffer, filename);
+
+        case 'text/html':
+            return parseHtml(buffer, filename);
+
+        case 'application/vnd.openxmlformats-officedocument.presentationml.presentation':
+        case 'application/vnd.ms-powerpoint':
+            return parsePptx(buffer, filename);
 
         case 'text/plain':
         case 'text/markdown':

@@ -5,6 +5,13 @@ import { parseDocument } from '../services/parser.service';
 import { chromaService } from '../services/chroma.service';
 import { smartSplitText } from '../services/chunking';
 import { query } from '../db';
+import crypto from 'crypto';
+import {
+    calculateFileCharge,
+    checkPuBalance,
+    deductPuBalance,
+    saveFileProcessingCache,
+} from '../services/pu-charging.service';
 
 const router = Router();
 
@@ -24,6 +31,16 @@ const upload = multer({
             'application/vnd.ms-excel',
             'text/plain',
             'text/markdown',
+            // CSV
+            'text/csv',
+            'application/csv',
+            // JSON
+            'application/json',
+            // HTML
+            'text/html',
+            // Presentations
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/vnd.ms-powerpoint',
             // Images for OCR
             'image/png',
             'image/jpeg',
@@ -125,7 +142,7 @@ router.post('/parse-semantic', upload.single('file'), async (req: Request, res: 
     }
 });
 
-// ===== NEW API: Vectorize chunks and store in Chroma =====
+// ===== NEW API: Vectorize chunks and store in Chroma with PU Charging =====
 router.post('/vectorize', async (req: Request, res: Response) => {
     try {
         const schema = z.object({
@@ -152,6 +169,28 @@ router.post('/vectorize', async (req: Request, res: Response) => {
         const { agentId, userId, filename, fileSize, mimeType, chunks } = parsed.data;
 
         console.log(`🔢 Vectorizing ${chunks.length} chunks for agent ${agentId}`);
+
+        // ===== NEW: Smart File Charging =====
+        console.log(`💰 [PU Charging] Calculating charge for ${filename}...`);
+
+        // 1. Calculate charge
+        const chargeInfo = await calculateFileCharge(agentId, filename, chunks);
+        console.log(`💰 [PU Charging] Charge calculated: ${chargeInfo.puCost.toFixed(4)} PU (${chargeInfo.reason})`);
+
+        // 2. Check user balance
+        const balanceInfo = await checkPuBalance(userId, chargeInfo.puCost);
+
+        if (!balanceInfo.hasBalance) {
+            console.warn(`⚠️ [PU Charging] Insufficient balance for user ${userId}`);
+            return res.status(402).json({
+                error: 'Insufficient PU balance',
+                required: chargeInfo.puCost,
+                current: balanceInfo.currentBalance,
+                limit: balanceInfo.limit,
+            });
+        }
+
+        console.log(`✅ [PU Charging] Balance check passed for ${userId}`);
 
         let finalFileSize = fileSize;
         let finalMimeType = mimeType;
@@ -184,6 +223,15 @@ router.post('/vectorize', async (req: Request, res: Response) => {
             );
         }
 
+        // Save to knowledge_bases table
+        const kbId = crypto.randomUUID();
+
+        await query(
+            `INSERT INTO knowledge_bases (id, "agentId", filename, "fileUrl", "fileSize", "mimeType", created_at, updated_at, status)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), 'VECTORIZED')`,
+            [kbId, agentId, filename, `chroma://agent_${agentId}`, finalFileSize, finalMimeType]
+        );
+
         // Convert to DocumentChunk format for Chroma
         const documentChunks = chunks.map((chunk, i) => ({
             id: `${agentId}_${filename}_${chunk.index}_${Date.now()}`,
@@ -194,6 +242,7 @@ router.post('/vectorize', async (req: Request, res: Response) => {
                 mimeType: finalMimeType,
                 agentId,
                 userId,
+                knowledgeBaseId: kbId,
             },
         }));
 
@@ -202,23 +251,10 @@ router.post('/vectorize', async (req: Request, res: Response) => {
 
         console.log(`✅ Added ${chunks.length} vectors to Chroma collection agent_${agentId}`);
 
-        // Save to knowledge_bases table
-        const kbId = crypto.randomUUID();
-
-        await query(
-            `INSERT INTO knowledge_bases (id, "agentId", filename, "fileUrl", "fileSize", "mimeType", created_at, updated_at, status)
-             VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), 'VECTORIZED')`,
-            [kbId, agentId, filename, `chroma://agent_${agentId}`, finalFileSize, finalMimeType]
-        );
-
         // Save chunks to document_chunks table
         // We use a transaction conceptually, but here sequential inserts for simplicity
         if (chunks.length > 0) {
-            // Construct generic INSERT for multiple rows or loop
-            // For simplicity and safety against SQL inject, we loop or use unnest if supported.
-            // Let's use loop for safety and simplicity with existing query helper (it might not support bulk insert easily without specific syntax)
-
-            // Actually, let's just do sequential await for now or Promise.all (faster)
+            // sequential insert
             const insertPromises = chunks.map(chunk =>
                 query(
                     `INSERT INTO document_chunks (id, "knowledgeBaseId", content, chunk_index, created_at, updated_at)
@@ -230,12 +266,44 @@ router.post('/vectorize', async (req: Request, res: Response) => {
             await Promise.all(insertPromises);
         }
 
+        // ===== NEW: Deduct PU after successful vectorization =====
+        const deductSuccess = await deductPuBalance(userId, chargeInfo.puCost, {
+            source: 'KB_UPLOAD',
+            filename,
+            chargeReason: chargeInfo.reason,
+        });
+
+        if (!deductSuccess) {
+            console.error(`❌ [PU Charging] Failed to deduct PU, but vectorization succeeded. Rolling back...`);
+            // Optional: Rollback vectorization if PU deduction fails
+            // For now, log the issue
+        }
+
+        // ===== NEW: Save to file processing cache =====
+        const contentHash = crypto
+            .createHash('sha256')
+            .update(chunks.map(c => c.text).join('\n'))
+            .digest('hex');
+
+        await saveFileProcessingCache(
+            agentId,
+            filename,
+            contentHash,
+            finalFileSize,
+            chunks.length,
+            chargeInfo.puCost,
+            chargeInfo.chargePercentage
+        );
+
         return res.json({
             success: true,
             agentId,
             filename,
             chunksVectorized: chunks.length,
-            knowledgeBaseId: kbId
+            knowledgeBaseId: kbId,
+            puCharged: chargeInfo.puCost,      // 🎁 NEW
+            chargeReason: chargeInfo.reason,   // 🎁 NEW
+            chargePercentage: chargeInfo.chargePercentage, // 🎁 NEW
         });
     } catch (error: any) {
         console.error('Vectorize error:', error.message);

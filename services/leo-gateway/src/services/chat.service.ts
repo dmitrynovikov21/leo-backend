@@ -5,16 +5,18 @@
  */
 
 import { query, queryOne } from '../db';
-import { litellmService, ChatMessage } from './litellm.service';
+import { litellmService, ChatMessage, ToolCall } from './litellm.service';
 import { hybridSearchService } from './hybrid-search.service';
+import { promptService } from './prompt.service';
+import { agentTools, executeReportConflict, ReportConflictParams } from './agent-tools.service';
 
-export type MessageType = 'HUMAN' | 'AI' | 'SYSTEM';
+export type MessageType = 'HUMAN' | 'AI' | 'SYSTEM' | 'TOOL';
 
 interface StoredMessage {
     id: string;
     agentId: string;
     sessionId: string;
-    messageType: MessageType;
+    messageType: string; // broadened from MessageType to support tool messages
     content: string;
     createdAt: Date;
 }
@@ -69,11 +71,17 @@ class ChatService {
         if (!agent) return null;
 
         // Build full system prompt with behavior settings
-        let fullPrompt = agent.systemPrompt || 'You are a helpful assistant.';
+        // Start with platform-level instructions
+        let fullPrompt = await promptService.getPrompt('platform_core');
 
-        // Prepend identity instruction if displayName is set
+        // Add agent identity
         if (agent.display_name) {
-            fullPrompt = `Ты — ${agent.display_name}.\n\n${fullPrompt}`;
+            fullPrompt += `\n\nТы — ${agent.display_name}.`;
+        }
+
+        // Add agent-specific system prompt
+        if (agent.systemPrompt) {
+            fullPrompt += `\n\n${agent.systemPrompt}`;
         }
 
         // Add tone instructions
@@ -89,6 +97,9 @@ class ChatService {
             }
         }
 
+        // Add conflict detection protocol
+        fullPrompt += `\n\n${await promptService.getPrompt('conflict_detection_protocol')}`;
+
         return {
             systemPrompt: fullPrompt,
             name: agent.name,
@@ -96,14 +107,18 @@ class ChatService {
         };
     }
 
-    async saveMessage(agentId: string, sessionId: string, messageType: MessageType, content: string, isTest: boolean = false): Promise<void> {
+    async saveMessage(agentId: string, sessionId: string, messageType: string, content: string | null, isTest: boolean = false): Promise<void> {
         const id = generateId();
         const numericUserId = sessionToUserId(sessionId);
+
+        // Store null content as empty string for DB safety 
+        // (though in reality we might want to support nulls or JSON for tool calls)
+        const safeContent = content || '';
 
         await query(
             `INSERT INTO agent_messages (id, agent_id, telegram_user_id, message_type, content, is_test, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-            [id, agentId, numericUserId, messageType, content, isTest]
+            [id, agentId, numericUserId, messageType, safeContent, isTest]
         );
     }
 
@@ -114,13 +129,15 @@ class ChatService {
             id: string;
             agent_id: string;
             telegram_user_id: string;
-            message_type: MessageType;
+            message_type: string;
             content: string;
             created_at: Date;
         }>(
             `SELECT id, agent_id, telegram_user_id, message_type, content, created_at
              FROM agent_messages
              WHERE agent_id = $1 AND telegram_user_id = $2
+               -- Exclude tool messages from simple history for now as chat UI might not support them yet
+               AND message_type IN ('HUMAN', 'AI') 
              ORDER BY created_at DESC
              LIMIT $3`,
             [agentId, numericUserId, limit]
@@ -157,15 +174,47 @@ class ChatService {
 
     async searchDocuments(agentId: string, queryText: string): Promise<string | null> {
         try {
-            const results = await hybridSearchService.searchWithFallback(agentId, queryText, 3);
+            const results = await hybridSearchService.searchWithFallback(agentId, queryText, 300);
 
             if (results.length === 0) return null;
 
             return results
-                .map((r, i) => `[${i + 1}] ${r.content}`)
+                .map((r, i) => {
+                    const id = r.metadata?.knowledgeBaseId || r.metadata?.id || 'unknown';
+                    const filename = r.metadata?.source || r.metadata?.filename || 'Unknown File';
+
+                    return `<document index="${i + 1}" id="${id}" filename="${filename}">
+${r.content}
+</document>`;
+                })
                 .join('\n\n');
         } catch (error) {
             console.error('Hybrid search error:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Get all notes for an agent (for priority injection)
+     * Notes are added at the END of the prompt for recency bias
+     */
+    async getAgentNotes(agentId: string): Promise<string | null> {
+        try {
+            const notes = await query<{ id: string; title: string; content: string }>(
+                `SELECT id, title, content FROM agent_notes WHERE agent_id = $1 ORDER BY updated_at DESC`,
+                [agentId]
+            );
+
+            if (notes.length === 0) return null;
+
+            return notes
+                .map(n => `NOTE
+Note ID: ${n.id}
+Title: ${n.title}
+Content: ${n.content}`)
+                .join('\n\n---\n\n');
+        } catch (error) {
+            console.error('Get notes error:', error);
             return null;
         }
     }
@@ -174,7 +223,8 @@ class ChatService {
         systemPrompt: string,
         summary: string | null,
         recentMessages: StoredMessage[],
-        ragContext: string | null
+        ragContext: string | null,
+        notesContext: string | null = null
     ): ChatMessage[] {
         const messages: ChatMessage[] = [];
 
@@ -184,8 +234,14 @@ class ChatService {
             system += `\n\n# КРАТКОЕ РЕЗЮМЕ ПРЕДЫДУЩЕГО ДИАЛОГА:\n${summary}`;
         }
 
+        // RAG context from files (lower priority)
         if (ragContext) {
-            system += `\n\n# РЕЛЕВАНТНАЯ ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ:\n${ragContext}`;
+            system += `\n\n# РЕЛЕВАНТНАЯ ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ:\n<known_information>\n${ragContext}\n</known_information>`;
+        }
+
+        // Notes at the END for recency bias (HIGH PRIORITY)
+        if (notesContext) {
+            system += `\n\n# IMPORTANT UPDATES (High Priority):\n${notesContext}`;
         }
 
         messages.push({ role: 'system', content: system });
@@ -201,14 +257,38 @@ class ChatService {
         return messages;
     }
 
+    private async executeTool(agentId: string, sessionId: string, toolCall: ToolCall): Promise<string> {
+        const { name, arguments: argsStr } = toolCall.function;
+
+        try {
+            const args = JSON.parse(argsStr);
+
+            switch (name) {
+                case 'report_conflict':
+                    // Pass chatId (which is sessionId here) to log conflict properly
+                    return await executeReportConflict(agentId, args as ReportConflictParams, sessionId);
+                default:
+                    return `Unknown tool: ${name}`;
+            }
+        } catch (error: any) {
+            console.error(`Tool execution error (${name}):`, error.message);
+            return `Tool error: ${error.message}`;
+        }
+    }
+
     async processMessage(
         agentId: string,
         sessionId: string | null,
         message: string,
+        explicitUserId?: string, // New optional parameter
         isTest: boolean = true
     ): Promise<{ sessionId: string; response: string; timestamp: string }> {
         // Generate session if not provided
         const finalSessionId = sessionId || generateSessionId(isTest);
+
+        // Determine user ID for logging/tracking
+        // Use explicit userId if provided, otherwise fallback to session ID
+        const trackingUserId = explicitUserId || finalSessionId;
 
         // Get agent config
         const agentConfig = await this.getAgentConfig(agentId);
@@ -228,24 +308,80 @@ class ChatService {
             console.log(`📚 [${agentId}] Found relevant documents for test session`);
         }
 
+        // Get agent notes
+        const notesContext = await this.getAgentNotes(agentId);
+        if (notesContext) {
+            console.log(`📝 [${agentId}] Found notes for priority injection`);
+        }
+
         // Build chat messages
         const chatMessages = this.buildMessages(
             agentConfig.systemPrompt,
             memoryContext.summary,
             memoryContext.recentMessages,
-            ragContext
+            ragContext,
+            notesContext
         );
 
-        // Note: current message is already in recentMessages (saved above)
+        // Add current user message
+        chatMessages.push({ role: 'user', content: message });
 
-        // Get LLM response
+        // First LLM Call with tools
         const response = await litellmService.chatCompletion({
+            userId: trackingUserId,
+            agentId: agentId,
             model: 'claude-haiku-4',
             messages: chatMessages,
             temperature: agentConfig.temperature,
+            tools: agentTools,
+            tool_choice: 'auto',
         });
 
-        const aiResponse = response.choices[0]?.message?.content || 'No response';
+        const choice = response.choices[0];
+        let aiResponse = choice.message?.content || '';
+
+        // Handle Tool Calls
+        if (choice.finish_reason === 'tool_calls' || choice.message.tool_calls) {
+            const toolCalls = choice.message.tool_calls || [];
+            console.log(`🔧 [${agentId}] LLM requested ${toolCalls.length} tool call(s) in Gateway`);
+
+            // Add assistant message with tool calls
+            const assistantMessage: ChatMessage = {
+                role: 'assistant',
+                content: choice.message.content,
+                tool_calls: toolCalls,
+            };
+
+            const updatedMessages = [...chatMessages, assistantMessage];
+
+            // Execute tools
+            for (const toolCall of toolCalls) {
+                console.log(`   Executing: ${toolCall.function.name}`);
+                const result = await this.executeTool(agentId, finalSessionId, toolCall);
+
+                updatedMessages.push({
+                    role: 'tool',
+                    content: result,
+                    tool_call_id: toolCall.id,
+                });
+            }
+
+            // Follow-up LLM Call
+            const followUpResponse = await litellmService.chatCompletion({
+                userId: trackingUserId,
+                agentId: agentId,
+                model: 'claude-haiku-4',
+                messages: updatedMessages,
+                temperature: agentConfig.temperature,
+                tools: agentTools, // Required by Anthropic when tool messages are present
+            });
+
+            aiResponse = followUpResponse.choices[0]?.message?.content || 'No response after tools';
+        }
+
+        if (!aiResponse && !choice.message.tool_calls) {
+            aiResponse = 'No response';
+        }
 
         // Save AI response
         await this.saveMessage(agentId, finalSessionId, 'AI', aiResponse, isTest);
