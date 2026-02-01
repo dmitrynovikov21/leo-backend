@@ -174,7 +174,7 @@ class ChatService {
 
     async searchDocuments(agentId: string, queryText: string): Promise<string | null> {
         try {
-            const results = await hybridSearchService.searchWithFallback(agentId, queryText, 3);
+            const results = await hybridSearchService.searchWithFallback(agentId, queryText, 300);
 
             if (results.length === 0) return null;
 
@@ -183,12 +183,11 @@ class ChatService {
                     const id = r.metadata?.knowledgeBaseId || r.metadata?.id || 'unknown';
                     const filename = r.metadata?.source || r.metadata?.filename || 'Unknown File';
 
-                    return `DOCUMENT [${i + 1}]
-File ID: ${id}
-Filename: ${filename}
-Content: ${r.content}`;
+                    return `<document index="${i + 1}" id="${id}" filename="${filename}">
+${r.content}
+</document>`;
                 })
-                .join('\n\n---\n\n');
+                .join('\n\n');
         } catch (error) {
             console.error('Hybrid search error:', error);
             return null;
@@ -237,7 +236,7 @@ Content: ${n.content}`)
 
         // RAG context from files (lower priority)
         if (ragContext) {
-            system += `\n\n# РЕЛЕВАНТНАЯ ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ:\n${ragContext}`;
+            system += `\n\n# РЕЛЕВАНТНАЯ ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ:\n<known_information>\n${ragContext}\n</known_information>`;
         }
 
         // Notes at the END for recency bias (HIGH PRIORITY)

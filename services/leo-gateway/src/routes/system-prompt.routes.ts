@@ -6,6 +6,7 @@
 import { Router, Request, Response } from 'express';
 import { PLATFORM_CORE_PROMPT } from '../constants/prompts';
 import { queryOne } from '../db';
+import { promptService } from '../services/prompt.service';
 
 const router = Router();
 
@@ -33,6 +34,26 @@ router.get('/:slug', async (req: Request, res: Response) => {
         return res.status(500).json({
             error: 'Failed to get system prompt',
             message: error.message,
+        });
+    }
+});
+
+/**
+ * POST /api/v1/system-prompts/refresh
+ * Clear system prompts cache to force DB reload
+ */
+router.post('/refresh', async (req: Request, res: Response) => {
+    try {
+        promptService.refreshCache();
+        return res.json({
+            success: true,
+            message: 'System prompts cache cleared'
+        });
+    } catch (error: any) {
+        console.error('Refresh cache error:', error.message);
+        return res.status(500).json({
+            error: 'Failed to refresh cache',
+            message: error.message
         });
     }
 });

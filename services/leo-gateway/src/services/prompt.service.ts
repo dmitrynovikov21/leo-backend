@@ -66,6 +66,11 @@ class PromptService {
     clearCache() {
         this.cache.clear();
     }
+
+    refreshCache() {
+        this.clearCache();
+        console.log('🔄 System prompts cache cleared');
+    }
 }
 
 export const promptService = new PromptService();

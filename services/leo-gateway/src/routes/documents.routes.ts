@@ -31,6 +31,16 @@ const upload = multer({
             'application/vnd.ms-excel',
             'text/plain',
             'text/markdown',
+            // CSV
+            'text/csv',
+            'application/csv',
+            // JSON
+            'application/json',
+            // HTML
+            'text/html',
+            // Presentations
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/vnd.ms-powerpoint',
             // Images for OCR
             'image/png',
             'image/jpeg',
