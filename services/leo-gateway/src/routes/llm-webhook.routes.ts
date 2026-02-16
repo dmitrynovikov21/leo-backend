@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query } from '../db';
+import * as puChargingService from '../services/pu-charging.service';
 
 const router = Router();
 
@@ -44,6 +45,19 @@ router.post('/llm-webhook', async (req: Request, res: Response) => {
         }
 
         const data: LLMWebhookPayload = parsed.data;
+
+        if (data.platformTokensCharged > 0) {
+            // Deduct from balance (Unified Balance System)
+            await puChargingService.deductPuBalance(
+                data.userId,
+                data.platformTokensCharged,
+                {
+                    source: 'LLM_CHAT',
+                    filename: data.model,
+                    chargeReason: `Usage charge for ${data.model} (${data.totalTokens} tokens)`
+                }
+            );
+        }
 
         await query(
             `INSERT INTO token_usage (

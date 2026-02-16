@@ -113,8 +113,8 @@ export async function checkPuBalance(
     const { token_balance } = result[0];
     const balance = typeof token_balance === 'string' ? parseFloat(token_balance) : token_balance;
 
-    // Soft limit -5.0 allows small overdraft
-    const hasBalance = balance >= requiredPu || balance > -5.0;
+    // Strict zero balance policy as requested by user
+    const hasBalance = balance >= requiredPu && balance > 0;
 
     return {
         hasBalance,
@@ -156,7 +156,7 @@ export async function deductPuBalance(
         // Update balance in users table
         await query(
             `UPDATE users
-       SET token_balance = token_balance - $1,
+       SET token_balance = (token_balance::numeric - $1::numeric),
            updated_at = NOW()
        WHERE id = $2`,
             [puAmount, userId]
@@ -168,11 +168,11 @@ export async function deductPuBalance(
             `INSERT INTO token_transactions 
        (id, user_id, type, amount, balance_before, balance_after, 
         description, metadata, created_at)
-       VALUES ($1, $2, 'DEDUCTION', -$3, $4, $5, $6, $7, NOW())`,
+       VALUES ($1, $2, 'DEDUCTION', $3::numeric, $4::numeric, $5::numeric, $6, $7, NOW())`,
             [
                 crypto.randomUUID(),
                 userId,
-                puAmount,
+                -puAmount,
                 balanceBefore,
                 balanceAfter,
                 `PU Deduction: ${metadata.filename} (${metadata.chargeReason})`,

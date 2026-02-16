@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { litellmService, ChatMessage } from '../services/litellm.service';
 import { usageService } from '../services/usage.service';
+import * as puChargingService from '../services/pu-charging.service';
+import { queryOne } from '../db';
 
 const router = Router();
 
@@ -31,6 +33,17 @@ router.post('/completions', async (req: Request, res: Response) => {
         }
 
         const { userId, messages, model, temperature, max_tokens, agentId } = parsed.data;
+
+        // check PU balance (Unified Balance System)
+        const balanceInfo = await puChargingService.checkPuBalance(userId, 0.1); // check if has at least 0.1 PU
+
+        if (!balanceInfo.hasBalance) {
+            return res.status(403).json({
+                error: 'Insufficient funds',
+                message: 'Your balance is too low to proceed',
+                currentBalance: balanceInfo.currentBalance
+            });
+        }
 
         const startTime = Date.now();
         const response = await litellmService.chatCompletion({

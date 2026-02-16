@@ -66,12 +66,10 @@ class PostgresUsageLogger(CustomLogger):
     
     def _calculate_platform_tokens(self, total_tokens: int, cost_usd: float) -> float:
         """
-        Calculate platform tokens to charge based on cost.
-        Default: 1 USD = 1000 platform tokens with 2x markup
+        Calculate platform tokens to charge based on usage.
+        Rule: 1000 Tokens = 1 PU
         """
-        metadata_multiplier = 2.0
-        tokens_per_usd = 1000
-        return cost_usd * metadata_multiplier * tokens_per_usd
+        return total_tokens / 1000.0
     
     def log_success_event(self, kwargs, response_obj, start_time, end_time):
         """Called when LLM request succeeds."""
