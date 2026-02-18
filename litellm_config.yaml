@@ -63,6 +63,17 @@ model_list:
       model: text-embedding-3-small
       api_key: os.environ/OPENAI_API_KEY
 
+  # OpenRouter
+  - model_name: openrouter-claude-3-5-sonnet
+    litellm_params:
+      model: openrouter/anthropic/claude-3.5-sonnet
+      api_key: os.environ/OPENROUTER_KEY
+
+  - model_name: openrouter-claude-3-5-haiku
+    litellm_params:
+      model: openrouter/anthropic/claude-3.5-haiku
+      api_key: os.environ/OPENROUTER_KEY
+
 litellm_settings:
   drop_params: true
   set_verbose: false

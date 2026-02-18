@@ -330,7 +330,7 @@ Content: ${n.content}`)
         const response = await litellmService.chatCompletion({
             userId: trackingUserId,
             agentId: agentId,
-            model: 'claude-haiku-4',
+            model: 'openrouter-claude-3-5-haiku',
             messages: chatMessages,
             temperature: agentConfig.temperature,
             tools: agentTools,
@@ -370,7 +370,7 @@ Content: ${n.content}`)
             const followUpResponse = await litellmService.chatCompletion({
                 userId: trackingUserId,
                 agentId: agentId,
-                model: 'claude-haiku-4',
+                model: 'openrouter-claude-3-5-haiku',
                 messages: updatedMessages,
                 temperature: agentConfig.temperature,
                 tools: agentTools, // Required by Anthropic when tool messages are present
