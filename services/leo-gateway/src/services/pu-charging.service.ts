@@ -85,7 +85,7 @@ export async function calculateFileCharge(
 
 /**
  * Check if user has enough PU balance
- * Uses `users.token_balance` as the single source of truth
+ * Uses `user_subscriptions.pu_balance` as the source of truth
  */
 export async function checkPuBalance(
     userId: string,
@@ -95,39 +95,27 @@ export async function checkPuBalance(
     currentBalance: number;
     limit: number;
 }> {
-    // Table: users
-    // Column: token_balance
-    const result = await query<{ token_balance: number }>(
-        `SELECT token_balance FROM users WHERE id = $1`,
+    const result = await query<{ pu_balance: number; pu_limit: number; is_blocked: boolean }>(
+        `SELECT pu_balance, pu_limit, is_blocked FROM user_subscriptions WHERE user_id = $1`,
         [userId]
     );
 
     if (result.length === 0) {
-        return {
-            hasBalance: false,
-            currentBalance: 0,
-            limit: 0,
-        };
+        return { hasBalance: false, currentBalance: 0, limit: 0 };
     }
 
-    const { token_balance } = result[0];
-    const balance = typeof token_balance === 'string' ? parseFloat(token_balance) : token_balance;
+    const { pu_balance, pu_limit, is_blocked } = result[0];
+    const balance = typeof pu_balance === 'string' ? parseFloat(pu_balance) : pu_balance;
+    const limit = typeof pu_limit === 'string' ? parseFloat(pu_limit) : pu_limit;
 
-    // Strict zero balance policy as requested by user
-    const hasBalance = balance >= requiredPu && balance > 0;
+    const hasBalance = !is_blocked && balance >= requiredPu && balance > 0;
 
-    return {
-        hasBalance,
-        currentBalance: balance,
-        // Unified balance system technically has no "limit" other than balance itself
-        // We return balance as limit to indicate capacity
-        limit: balance,
-    };
+    return { hasBalance, currentBalance: balance, limit };
 }
 
 /**
  * Deduct PU from user balance
- * Updates `users.token_balance` and logs to `token_transactions`
+ * Updates `user_subscriptions.pu_balance` and logs to `pu_transactions`
  */
 export async function deductPuBalance(
     userId: string,
@@ -139,48 +127,45 @@ export async function deductPuBalance(
     }
 ): Promise<boolean> {
     try {
-        // Get current balance
-        const current = await query<{ token_balance: number }>(
-            `SELECT token_balance FROM users WHERE id = $1`,
+        const current = await query<{ pu_balance: number }>(
+            `SELECT pu_balance FROM user_subscriptions WHERE user_id = $1`,
             [userId]
         );
 
         if (current.length === 0) {
-            console.error(`[PU Charging] User ${userId} not found`);
+            console.error(`[PU Charging] Subscription not found for user ${userId}`);
             return false;
         }
 
-        const balanceBefore = parseFloat(current[0].token_balance.toString());
+        const balanceBefore = parseFloat(current[0].pu_balance.toString());
         const balanceAfter = balanceBefore - puAmount;
 
-        // Update balance in users table
         await query(
-            `UPDATE users
-       SET token_balance = (token_balance::numeric - $1::numeric),
-           updated_at = NOW()
-       WHERE id = $2`,
+            `UPDATE user_subscriptions
+             SET pu_balance = (pu_balance - $1::numeric),
+                 pu_used_this_cycle = (pu_used_this_cycle + $1::numeric),
+                 updated_at = NOW()
+             WHERE user_id = $2`,
             [puAmount, userId]
         );
 
-        // Record transaction in token_transactions
-        // type: DEDUCTION
         await query(
-            `INSERT INTO token_transactions 
-       (id, user_id, type, amount, balance_before, balance_after, 
-        description, metadata, created_at)
-       VALUES ($1, $2, 'DEDUCTION', $3::numeric, $4::numeric, $5::numeric, $6, $7, NOW())`,
+            `INSERT INTO pu_transactions
+             (id, user_id, type, "puAmount", balance_before, balance_after, source, description, metadata, created_at)
+             VALUES ($1, $2, 'OVERAGE_DEDUCTION', $3::numeric, $4::numeric, $5::numeric, $6, $7, $8, NOW())`,
             [
                 crypto.randomUUID(),
                 userId,
-                -puAmount,
+                puAmount,
                 balanceBefore,
                 balanceAfter,
+                metadata.source,
                 `PU Deduction: ${metadata.filename} (${metadata.chargeReason})`,
                 JSON.stringify(metadata),
             ]
         );
 
-        console.log(`[PU Charging] Deducted ${puAmount} PU from user ${userId} (Unified Balance)`);
+        console.log(`[PU Charging] Deducted ${puAmount} PU from user ${userId}, balance: ${balanceBefore} → ${balanceAfter}`);
         return true;
     } catch (error) {
         console.error(`[PU Charging] Failed to deduct PU:`, error);

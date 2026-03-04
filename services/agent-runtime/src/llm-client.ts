@@ -83,7 +83,7 @@ class LLMClient {
             const response = await this.client.post<ChatCompletionResponse>('/api/v1/chat/completions', {
                 userId: config.userId,
                 agentId: config.agentId,
-                model: model || 'claude-haiku-4',
+                model: model || 'claude-sonnet-4-6',
                 messages,
                 temperature: config.temperature,
                 tools: agentTools,
@@ -123,7 +123,7 @@ class LLMClient {
                 const followUpResponse = await this.client.post<ChatCompletionResponse>('/api/v1/chat/completions', {
                     userId: config.userId,
                     agentId: config.agentId,
-                    model: model || 'claude-haiku-4',
+                    model: model || 'claude-sonnet-4-6',
                     messages: updatedMessages,
                     temperature: config.temperature,
                     tools: agentTools, // Anthropic requires tools param in follow-up calls

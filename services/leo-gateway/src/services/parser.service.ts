@@ -102,6 +102,50 @@ export async function parseText(buffer: Buffer, filename: string): Promise<Parse
     return { text: content, content, chunks };
 }
 
+export async function parseMarkdown(buffer: Buffer, filename: string): Promise<ParsedDocument> {
+    let text = buffer.toString('utf-8');
+
+    // Remove code blocks (fenced)
+    text = text.replace(/```[\s\S]*?```/g, '');
+    text = text.replace(/~~~[\s\S]*?~~~/g, '');
+
+    // Remove inline code
+    text = text.replace(/`[^`]*`/g, '');
+
+    // Convert headers to plain text (strip # symbols)
+    text = text.replace(/^#{1,6}\s+/gm, '');
+
+    // Convert links [text](url) → text
+    text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+
+    // Remove images ![alt](url)
+    text = text.replace(/!\[[^\]]*\]\([^)]*\)/g, '');
+
+    // Remove bold/italic markers
+    text = text.replace(/\*{1,3}([^*]*)\*{1,3}/g, '$1');
+    text = text.replace(/_{1,3}([^_]*)_{1,3}/g, '$1');
+
+    // Convert list markers to dashes
+    text = text.replace(/^[\s]*[-*+]\s+/gm, '- ');
+    text = text.replace(/^[\s]*\d+\.\s+/gm, '- ');
+
+    // Remove blockquote markers
+    text = text.replace(/^>\s+/gm, '');
+
+    // Remove horizontal rules
+    text = text.replace(/^(-{3,}|\*{3,}|_{3,})\s*$/gm, '');
+
+    // Clean up excessive whitespace
+    const content = text
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0)
+        .join('\n');
+
+    const chunks = splitIntoChunks(content, filename, 'text/markdown');
+    return { text: content, content, chunks };
+}
+
 export async function parseCsv(buffer: Buffer, filename: string): Promise<ParsedDocument> {
     // Use xlsx to parse CSV into a structured readable format
     const workbook = xlsx.read(buffer, { type: 'buffer' });
@@ -211,8 +255,11 @@ export async function parseDocument(
         case 'application/vnd.ms-powerpoint':
             return parsePptx(buffer, filename);
 
-        case 'text/plain':
         case 'text/markdown':
+        case 'text/x-markdown':
+            return parseMarkdown(buffer, filename);
+
+        case 'text/plain':
             return parseText(buffer, filename);
 
         default:

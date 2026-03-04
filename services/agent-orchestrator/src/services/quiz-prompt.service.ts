@@ -408,7 +408,7 @@ ${configContext}`;
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userMessage },
                 ],
-                model: 'claude-haiku-4',
+                model: 'claude-sonnet-4-6',
                 temperature: 0.7,
                 max_tokens: 2000,
             });

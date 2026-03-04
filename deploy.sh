@@ -5,8 +5,8 @@ SSH_HOST="${SSH_HOST:-144.124.249.196}"
 SSH_USER="${SSH_USER:-root}"
 SSH_PORT="${SSH_PORT:-22}"
 SSH_IDENTITY="${SSH_IDENTITY:-}"
-REMOTE_DIR="${REMOTE_DIR:-/root/leo}"
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+REMOTE_DIR="${REMOTE_DIR:-/root/ai-master}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
 
 SSH_OPTS=(-p "${SSH_PORT}" -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=60 -o ServerAliveCountMax=10)
 SCP_OPTS=(-P "${SSH_PORT}" -o StrictHostKeyChecking=accept-new)

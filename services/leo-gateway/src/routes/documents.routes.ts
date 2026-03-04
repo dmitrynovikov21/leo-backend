@@ -31,6 +31,7 @@ const upload = multer({
             'application/vnd.ms-excel',
             'text/plain',
             'text/markdown',
+            'text/x-markdown',
             // CSV
             'text/csv',
             'application/csv',

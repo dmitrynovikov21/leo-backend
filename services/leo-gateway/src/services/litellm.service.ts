@@ -28,6 +28,7 @@ export interface ChatCompletionRequest {
     max_tokens?: number;
     tools?: any[];
     tool_choice?: string;
+    requestType?: string;
 }
 
 export interface ChatCompletionResponse {
@@ -95,7 +96,7 @@ class LiteLLMService {
             metadata: {
                 userId: request.userId,
                 agentId: request.agentId,
-                request_type: 'AGENT_CHAT'
+                request_type: request.requestType || 'AGENT_CHAT'
             }
         };
 
@@ -111,7 +112,7 @@ class LiteLLMService {
 
     async generatePersona(role: string, description: string): Promise<string> {
         const response = await this.chatCompletion({
-            model: 'claude-haiku-4',
+            model: 'claude-sonnet-4-6',
             messages: [
                 {
                     role: 'system',
@@ -149,6 +150,7 @@ class LiteLLMService {
             ],
             temperature: 0.7,
             max_tokens: 2048,
+            requestType: 'PROMPT_GENERATION',
         });
 
         // Safe access to content, fallback to empty string if null

@@ -46,7 +46,7 @@ router.post('/llm-webhook', async (req: Request, res: Response) => {
 
         const data: LLMWebhookPayload = parsed.data;
 
-        if (data.platformTokensCharged > 0) {
+        if (data.platformTokensCharged > 0 && data.requestType !== 'PROMPT_GENERATION') {
             // Deduct from balance (Unified Balance System)
             await puChargingService.deductPuBalance(
                 data.userId,

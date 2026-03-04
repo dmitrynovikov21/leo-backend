@@ -42,7 +42,7 @@ services:
       - ./litellm_config.yaml:/app/config.yaml
       - ./litellm_callbacks.py:/app/litellm_callbacks.py
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
     depends_on:
       litellm-db:
         condition: service_healthy
@@ -54,7 +54,7 @@ services:
   chroma:
     image: chromadb/chroma:latest
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - chroma_data:/chroma/chroma
     environment:
@@ -67,7 +67,7 @@ services:
   leo-gateway:
     build:
       context: ./services/leo-gateway
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile
     environment:
       - PORT=8080
       - DATABASE_URL=${DATABASE_URL}
@@ -77,15 +77,17 @@ services:
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
       - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-gpt-4o-mini}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
-      - NODE_ENV=development
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./services/leo-gateway/src:/app/src
+      - NODE_ENV=production
     depends_on:
       - litellm
       - chroma
     restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.gateway.rule=Host(`gateway.leoagent.ru`)"
+      - "traefik.http.routers.gateway.entrypoints=websecure"
+      - "traefik.http.routers.gateway.tls.certresolver=le"
+      - "traefik.http.services.gateway.loadbalancer.server.port=8080"
     networks:
       - leo_default
 
@@ -100,14 +102,18 @@ services:
       - GATEWAY_URL=http://leo-gateway:8080
       - AGENT_IMAGE=leo-agent-runtime:latest
       - DOCKER_NETWORK=leo_default
-      - NODE_ENV=development
-    ports:
-      - "8081:8081"
+      - NODE_ENV=production
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - leo-gateway
     restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.orchestrator.rule=Host(`orchestrator.leoagent.ru`)"
+      - "traefik.http.routers.orchestrator.entrypoints=websecure"
+      - "traefik.http.routers.orchestrator.tls.certresolver=le"
+      - "traefik.http.services.orchestrator.loadbalancer.server.port=8081"
     networks:
       - leo_default
 
@@ -118,3 +124,4 @@ networks:
 volumes:
   chroma_data:
   litellm_postgres_data:
+  letsencrypt_data:
