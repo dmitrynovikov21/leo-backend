@@ -59,11 +59,14 @@ class LiteLLMService {
     private promptGeneratorInstruction: string | null = null;
 
     constructor() {
+        if (!config.litellmMasterKey) {
+            console.error('[LiteLLM] LITELLM_MASTER_KEY is not set — requests will fail');
+        }
         this.client = axios.create({
             baseURL: config.litellmUrl,
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${config.litellmMasterKey || 'sk-1234'}`,
+                'Authorization': `Bearer ${config.litellmMasterKey}`,
             },
         });
     }
@@ -105,9 +108,28 @@ class LiteLLMService {
             payload.tool_choice = request.tool_choice || 'auto';
         }
 
-        const response = await this.client.post<ChatCompletionResponse>('/chat/completions', payload);
+        const maxRetries = 3;
+        const baseDelay = 2000;
 
-        return response.data;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+                const response = await this.client.post<ChatCompletionResponse>('/chat/completions', payload);
+                return response.data;
+            } catch (error: any) {
+                const status = error.response?.status;
+
+                if ((status === 429 || status === 503) && attempt < maxRetries - 1) {
+                    const delay = baseDelay * Math.pow(2, attempt);
+                    console.warn(`[LiteLLM] ${status} error, retry ${attempt + 1}/${maxRetries} in ${delay}ms`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    continue;
+                }
+
+                throw error;
+            }
+        }
+
+        throw new Error('LiteLLM: max retries exceeded');
     }
 
     async generatePersona(role: string, description: string): Promise<string> {

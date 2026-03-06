@@ -5,6 +5,14 @@ import { MemoryManager } from './memory/manager';
 import { scheduleChecker } from './schedule-checker';
 import { queryOne } from './db';
 
+function stripContextPrefix(text: string): string {
+    const prefix = '[CONTEXT]: ';
+    if (!text.startsWith(prefix)) return text;
+    const separatorIndex = text.indexOf('\n\n');
+    if (separatorIndex === -1) return text;
+    return text.slice(separatorIndex + 2);
+}
+
 // Debounce storage: userId -> { timeout, messages[] }
 const pendingMessages = new Map<number, {
     timeout: NodeJS.Timeout;
@@ -36,7 +44,7 @@ async function buildFullSystemPrompt(): Promise<string> {
 
     // Add tone instructions
     if (config.tone.length > 0) {
-        prompt += `\n\n## ТОН ОБЩЕНИЯ\nИспользуй следующий тон в общении: ${config.tone.join(', ')}.`;
+        prompt += `\n\n## ТОН ОБЩЕНИЯ\nТвой тон: ${config.tone.join(', ')}. Поддерживай этот стиль во всех ответах. Не переключайся на другой тон даже если клиент грубит.`;
     }
 
     // Add guardrails as strict rules
@@ -97,10 +105,12 @@ async function processMessages(userId: number, messages: string[], ctx: Context)
                     const id = r.metadata?.knowledgeBaseId || r.metadata?.id || 'unknown';
                     const filename = r.metadata?.source || r.metadata?.filename || 'Unknown File';
 
+                    const cleanContent = stripContextPrefix(r.content);
+
                     return `DOCUMENT [${i + 1}]
 File ID: ${id}
 Filename: ${filename}
-Content: ${r.content}`;
+Content: ${cleanContent}`;
                 })
                 .join('\n\n---\n\n');
             console.log(`📚 Found ${searchResults.length} relevant documents`);

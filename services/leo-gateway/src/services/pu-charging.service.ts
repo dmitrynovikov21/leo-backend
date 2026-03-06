@@ -124,30 +124,33 @@ export async function deductPuBalance(
         source: string;
         filename: string;
         chargeReason: string;
+        enrichmentTokens?: number;
     }
 ): Promise<boolean> {
     try {
-        const current = await query<{ pu_balance: number }>(
-            `SELECT pu_balance FROM user_subscriptions WHERE user_id = $1`,
-            [userId]
+        // Atomic UPDATE: deducts only if balance is sufficient and user is not blocked.
+        // RETURNING gives us new pu_balance (after deduction); add puAmount back to get balance_before.
+        const result = await query<{ balance_before: string; balance_after: string }>(
+            `UPDATE user_subscriptions
+             SET pu_balance = pu_balance - $1::numeric,
+                 pu_used_this_cycle = pu_used_this_cycle + $1::numeric,
+                 updated_at = NOW()
+             WHERE user_id = $2
+               AND pu_balance >= $1::numeric
+               AND is_blocked = false
+             RETURNING
+               (pu_balance + $1::numeric) AS balance_before,
+               pu_balance                 AS balance_after`,
+            [puAmount, userId]
         );
 
-        if (current.length === 0) {
-            console.error(`[PU Charging] Subscription not found for user ${userId}`);
+        if (result.length === 0) {
+            console.warn(`[PU Charging] Insufficient balance or blocked for user ${userId}`);
             return false;
         }
 
-        const balanceBefore = parseFloat(current[0].pu_balance.toString());
-        const balanceAfter = balanceBefore - puAmount;
-
-        await query(
-            `UPDATE user_subscriptions
-             SET pu_balance = (pu_balance - $1::numeric),
-                 pu_used_this_cycle = (pu_used_this_cycle + $1::numeric),
-                 updated_at = NOW()
-             WHERE user_id = $2`,
-            [puAmount, userId]
-        );
+        const balanceBefore = parseFloat(result[0].balance_before);
+        const balanceAfter = parseFloat(result[0].balance_after);
 
         await query(
             `INSERT INTO pu_transactions

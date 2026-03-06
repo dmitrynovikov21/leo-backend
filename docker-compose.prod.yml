@@ -25,6 +25,7 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENROUTER_KEY=${OPENROUTER_KEY:-}
       - DATABASE_URL=postgresql://litellm:litellm_password@litellm-db:5432/litellm
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
       - UI_USERNAME=admin
@@ -75,7 +76,7 @@ services:
       - CHROMA_URL=http://chroma:8000
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
-      - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-gpt-4o-mini}
+      - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-openrouter-claude-3-5-sonnet}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
       - NODE_ENV=production
     depends_on:

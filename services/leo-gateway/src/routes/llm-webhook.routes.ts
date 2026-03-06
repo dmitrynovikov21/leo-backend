@@ -5,6 +5,20 @@ import * as puChargingService from '../services/pu-charging.service';
 
 const router = Router();
 
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+
+function verifyWebhookSecret(req: Request, res: Response, next: Function) {
+    if (!WEBHOOK_SECRET) {
+        console.warn('[LLM Webhook] WEBHOOK_SECRET not set — endpoint is unprotected');
+        return next();
+    }
+    const provided = req.headers['x-webhook-secret'];
+    if (provided !== WEBHOOK_SECRET) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    next();
+}
+
 // Schema for incoming LLM usage webhook data
 const llmWebhookSchema = z.object({
     userId: z.string().min(1, 'userId is required'),
@@ -33,7 +47,7 @@ type LLMWebhookPayload = z.infer<typeof llmWebhookSchema>;
  * POST /api/v1/llm-webhook
  * Receives LLM usage data from LiteLLM orchestrator and saves to token_usage table
  */
-router.post('/llm-webhook', async (req: Request, res: Response) => {
+router.post('/llm-webhook', verifyWebhookSecret, async (req: Request, res: Response) => {
     try {
         const parsed = llmWebhookSchema.safeParse(req.body);
 

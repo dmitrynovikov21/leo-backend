@@ -7,7 +7,7 @@ const envSchema = z.object({
     CHROMA_URL: z.string().default('http://chroma:8000'),
     OPENAI_API_KEY: z.string().optional(),
     EMBEDDING_MODEL: z.string().default('text-embedding-3-small'),
-    DEFAULT_LLM_MODEL: z.string().default('gpt-4o-mini'),
+    DEFAULT_LLM_MODEL: z.string().default('openrouter-claude-3-5-sonnet'),
     LITELLM_MASTER_KEY: z.string().optional(),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 });

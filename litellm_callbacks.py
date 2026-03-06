@@ -19,15 +19,32 @@ class PostgresUsageLogger(CustomLogger):
     def __init__(self):
         sys.stderr.write("[PostgresUsageLogger] Initializing PostgresUsageLogger...\n")
         self.webhook_url = os.environ.get("LEO_WEBHOOK_URL", "http://leo-gateway:8080/api/v1/llm-webhook")
+        self.webhook_secret = os.environ.get("WEBHOOK_SECRET")
         self.enabled = bool(os.environ.get("LEO_WEBHOOK_URL") or os.environ.get("LEO_DATABASE_URL"))
         if not self.enabled:
             sys.stderr.write("[PostgresUsageLogger] Warning: LEO_WEBHOOK_URL not set, usage logging disabled\n")
         else:
             sys.stderr.write(f"[PostgresUsageLogger] Enabled. Webhook URL: {self.webhook_url}\n")
+        if not self.webhook_secret:
+            sys.stderr.write("[PostgresUsageLogger] Warning: WEBHOOK_SECRET not set\n")
 
     async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
-        """Async version of log_success_event"""
-        self.log_success_event(kwargs, response_obj, start_time, end_time)
+        """Non-blocking async handler — uses AsyncClient to avoid blocking the event loop."""
+        if not self.enabled:
+            return
+        try:
+            payload = self._build_payload(kwargs, response_obj, start_time, end_time)
+            if payload is None:
+                return
+            headers = {}
+            if self.webhook_secret:
+                headers["x-webhook-secret"] = self.webhook_secret
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(self.webhook_url, json=payload, headers=headers)
+                if response.status_code >= 400:
+                    sys.stderr.write(f"[PostgresUsageLogger] Webhook error {response.status_code}: {response.text}\n")
+        except Exception as e:
+            sys.stderr.write(f"[PostgresUsageLogger] Error sending usage: {e}\n")
 
     async def async_log_failure_event(self, kwargs, response_obj, start_time, end_time):
         """Async version of log_failure_event"""
@@ -71,54 +88,54 @@ class PostgresUsageLogger(CustomLogger):
         """
         return total_tokens / 1000.0
     
+    def _build_payload(self, kwargs, response_obj, start_time, end_time) -> Optional[dict]:
+        usage = response_obj.get("usage", {}) if isinstance(response_obj, dict) else getattr(response_obj, "usage", None)
+        if not usage:
+            return None
+
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) if hasattr(usage, "prompt_tokens") else usage.get("prompt_tokens", 0)
+        completion_tokens = getattr(usage, "completion_tokens", 0) if hasattr(usage, "completion_tokens") else usage.get("completion_tokens", 0)
+        total_tokens = getattr(usage, "total_tokens", 0) if hasattr(usage, "total_tokens") else usage.get("total_tokens", 0)
+
+        model = kwargs.get("model", "unknown")
+        response_time_ms = int((end_time - start_time).total_seconds() * 1000)
+        response_cost = kwargs.get("response_cost", 0) or 0
+
+        user_id = self._extract_user_id(kwargs, response_obj)
+        agent_id = self._extract_agent_id(kwargs)
+        request_type = self._extract_request_type(kwargs)
+        is_test = self._extract_is_test(kwargs)
+        platform_tokens_charged = self._calculate_platform_tokens(total_tokens, response_cost)
+
+        return {
+            "userId": user_id,
+            "agentId": agent_id,
+            "promptTokens": prompt_tokens,
+            "completionTokens": completion_tokens,
+            "totalTokens": total_tokens,
+            "model": model,
+            "costUsd": response_cost,
+            "responseTimeMs": response_time_ms,
+            "requestType": request_type,
+            "platformTokensCharged": platform_tokens_charged,
+            "isTest": is_test,
+        }
+
     def log_success_event(self, kwargs, response_obj, start_time, end_time):
-        """Called when LLM request succeeds."""
+        """Sync fallback — only used if async path is unavailable."""
         if not self.enabled:
             return
-            
         try:
-            usage = response_obj.get("usage", {}) if isinstance(response_obj, dict) else getattr(response_obj, "usage", None)
-            
-            if not usage:
+            payload = self._build_payload(kwargs, response_obj, start_time, end_time)
+            if payload is None:
                 return
-            
-            prompt_tokens = getattr(usage, "prompt_tokens", 0) if hasattr(usage, "prompt_tokens") else usage.get("prompt_tokens", 0)
-            completion_tokens = getattr(usage, "completion_tokens", 0) if hasattr(usage, "completion_tokens") else usage.get("completion_tokens", 0)
-            total_tokens = getattr(usage, "total_tokens", 0) if hasattr(usage, "total_tokens") else usage.get("total_tokens", 0)
-            
-            model = kwargs.get("model", "unknown")
-            response_time_ms = int((end_time - start_time).total_seconds() * 1000)
-            response_cost = kwargs.get("response_cost", 0) or 0
-            
-            user_id = self._extract_user_id(kwargs, response_obj)
-            agent_id = self._extract_agent_id(kwargs)
-            request_type = self._extract_request_type(kwargs)
-            is_test = self._extract_is_test(kwargs)
-            platform_tokens_charged = self._calculate_platform_tokens(total_tokens, response_cost)
-            
-            # Send to webhook
-            payload = {
-                "userId": user_id,
-                "agentId": agent_id,
-                "promptTokens": prompt_tokens,
-                "completionTokens": completion_tokens,
-                "totalTokens": total_tokens,
-                "model": model,
-                "costUsd": response_cost,
-                "responseTimeMs": response_time_ms,
-                "requestType": request_type,
-                "platformTokensCharged": platform_tokens_charged,
-                "isTest": is_test,
-            }
-            
-            # Use sys.stderr for better visibility in docker logs
-            # sys.stderr.write(f"[PostgresUsageLogger] Sending payload: {payload}\n")
-            
+            headers = {}
+            if self.webhook_secret:
+                headers["x-webhook-secret"] = self.webhook_secret
             with httpx.Client(timeout=5.0) as client:
-                response = client.post(self.webhook_url, json=payload)
+                response = client.post(self.webhook_url, json=payload, headers=headers)
                 if response.status_code >= 400:
                     sys.stderr.write(f"[PostgresUsageLogger] Webhook error {response.status_code}: {response.text}\n")
-            
         except Exception as e:
             sys.stderr.write(f"[PostgresUsageLogger] Error sending usage: {e}\n")
     

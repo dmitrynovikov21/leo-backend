@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { query, queryOne } from '../db';
 import { chromaService } from '../services/chroma.service';
+import { reEnrichSingleChunk, buildEnrichedText } from '../services/contextual-retrieval.service';
 
 const router = Router({ mergeParams: true }); // Enable access to params from parent router if needed
 
@@ -131,9 +132,9 @@ router.get('/:agentId/documents/:docId', async (req: Request, res: Response) => 
             return res.status(404).json({ error: 'Document not found' });
         }
 
-        // Fetch chunks
-        const chunks = await query<{ id: string; content: string }>(
-            `SELECT id, content FROM document_chunks WHERE "knowledgeBaseId" = $1 ORDER BY chunk_index ASC`,
+        // Fetch chunks (including context)
+        const chunks = await query<{ id: string; content: string; context: string | null }>(
+            `SELECT id, content, context FROM document_chunks WHERE "knowledgeBaseId" = $1 ORDER BY chunk_index ASC`,
             [docId]
         );
 
@@ -142,7 +143,8 @@ router.get('/:agentId/documents/:docId', async (req: Request, res: Response) => 
             filename: doc.filename,
             chunks: chunks.map(chunk => ({
                 id: chunk.id,
-                text: chunk.content // User asked for 'text' or 'content'
+                text: chunk.content,
+                context: chunk.context,
             }))
         });
 
@@ -182,13 +184,32 @@ router.patch('/:agentId/documents/:docId/chunks/:chunkId', async (req: Request, 
 
         // Update chunk content in DB
         await query(
-            `UPDATE document_chunks SET content = $1, updated_at = NOW() WHERE id = $2`,
+            `UPDATE document_chunks SET content = $1, search_vector = to_tsvector('simple', $1), updated_at = NOW() WHERE id = $2`,
             [text, chunkId]
         );
 
-        // Re-vectorize: regenerate embedding and update in ChromaDB
+        // Re-enrich the chunk with contextual retrieval
+        let newContext: string | null = null;
         try {
-            // Find the actual Vector ID in Chroma (it's NOT the PG chunkId)
+            const enrichResult = await reEnrichSingleChunk(
+                chunk.knowledge_base_id,
+                chunk.chunk_index,
+                text
+            );
+            newContext = enrichResult.context;
+
+            // Update context in DB
+            await query(
+                `UPDATE document_chunks SET context = $1 WHERE id = $2`,
+                [newContext, chunkId]
+            );
+            console.log(`🧠 Re-enriched chunk ${chunkId} with new context`);
+        } catch (enrichErr: any) {
+            console.warn(`⚠️ Re-enrichment failed for chunk ${chunkId}:`, enrichErr.message);
+        }
+
+        // Re-vectorize: regenerate embedding and update in ChromaDB (with enriched text)
+        try {
             const chromaVectorId = await chromaService.findVectorId(
                 agentId,
                 chunk.knowledge_base_id,
@@ -197,19 +218,20 @@ router.patch('/:agentId/documents/:docId/chunks/:chunkId', async (req: Request, 
             );
 
             if (chromaVectorId) {
-                await chromaService.updateDocument(agentId, chromaVectorId, text);
+                const enrichedText = buildEnrichedText(text, newContext);
+                await chromaService.updateDocument(agentId, chromaVectorId, enrichedText);
                 console.log(`✅ Updated chunk ${chunkId} (Vector: ${chromaVectorId}) in ChromaDB`);
             } else {
                 console.warn(`⚠️ Could not find vector for chunk ${chunkId} in ChromaDB. Skipped vector update.`);
             }
         } catch (chromaError: any) {
             console.warn(`⚠️ ChromaDB update failed for chunk ${chunkId}:`, chromaError.message);
-            // Continue - DB is updated, Chroma will be out of sync but not critical
         }
 
         return res.status(200).json({
             success: true,
             chunkId,
+            context: newContext,
             message: 'Chunk updated successfully'
         });
 

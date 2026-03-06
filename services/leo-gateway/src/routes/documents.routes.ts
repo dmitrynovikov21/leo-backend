@@ -3,7 +3,7 @@ import multer from 'multer';
 import { z } from 'zod';
 import { parseDocument } from '../services/parser.service';
 import { chromaService } from '../services/chroma.service';
-import { smartSplitText } from '../services/chunking';
+import { smartSplitText, semanticSplitText } from '../services/chunking';
 import { query } from '../db';
 import crypto from 'crypto';
 import {
@@ -12,6 +12,10 @@ import {
     deductPuBalance,
     saveFileProcessingCache,
 } from '../services/pu-charging.service';
+import {
+    enrichChunksWithContext,
+    buildEnrichedText,
+} from '../services/contextual-retrieval.service';
 
 const router = Router();
 
@@ -64,7 +68,8 @@ const upload = multer({
 router.post('/parse', upload.single('file'), async (req: Request, res: Response) => {
     try {
         const file = req.file;
-        const maxChunkSize = parseInt(req.body.chunkSize) || 2000;
+        const maxChunkSize = parseInt(req.body.chunkSize) || 4000;
+        const smartOnly = req.query.smartOnly === 'true' || req.body.smartOnly === 'true';
 
         if (!file) {
             return res.status(400).json({ error: 'No file provided' });
@@ -74,11 +79,28 @@ router.post('/parse', upload.single('file'), async (req: Request, res: Response)
 
         // Parse document to text
         const parsed = await parseDocument(file.buffer, file.originalname, file.mimetype);
+        const fullText = parsed.text;
 
-        // Smart split: preserves sentence boundaries
-        const chunks = smartSplitText(parsed.text, { maxChunkSize });
+        let chunks;
+        let method = 'smart';
 
-        console.log(`📊 Smart split into ${chunks.length} chunks`);
+        // Try semantic splitting first (unless smartOnly is requested)
+        if (!smartOnly) {
+            try {
+                chunks = await semanticSplitText(fullText, { maxTokenSize: 500 });
+                method = 'semantic';
+                console.log(`🧠 Semantic split into ${chunks.length} chunks`);
+            } catch (semErr: any) {
+                console.warn(`⚠️ Semantic chunking failed, falling back to smart: ${semErr.message}`);
+            }
+        }
+
+        // Fallback to smart split
+        if (!chunks || chunks.length === 0) {
+            chunks = smartSplitText(fullText, { maxChunkSize });
+            method = 'smart';
+            console.log(`📊 Smart split into ${chunks.length} chunks`);
+        }
 
         return res.json({
             success: true,
@@ -86,8 +108,9 @@ router.post('/parse', upload.single('file'), async (req: Request, res: Response)
             mimeType: file.mimetype,
             fileSize: file.size,
             totalChunks: chunks.length,
-            method: 'smart',
+            method,
             maxChunkSize,
+            fullText,
             chunks: chunks.map(c => ({
                 index: c.index,
                 text: c.text,
@@ -152,6 +175,7 @@ router.post('/vectorize', async (req: Request, res: Response) => {
             filename: z.string(),
             fileSize: z.number().optional().default(0),
             mimeType: z.string().optional().default('application/octet-stream'),
+            fullText: z.string().optional().default(''),
             chunks: z.array(z.object({
                 index: z.number(),
                 text: z.string(),
@@ -167,7 +191,15 @@ router.post('/vectorize', async (req: Request, res: Response) => {
             });
         }
 
-        const { agentId, userId, filename, fileSize, mimeType, chunks } = parsed.data;
+        const { agentId, userId, filename, fileSize, mimeType, fullText, chunks } = parsed.data;
+
+        if (chunks.length === 0) {
+            console.warn(`⚠️ No chunks to vectorize for ${filename} (agent ${agentId}). Skipping.`);
+            return res.status(400).json({
+                error: 'No chunks to vectorize',
+                message: 'Document parsing produced 0 chunks. The file may be empty or unsupported.',
+            });
+        }
 
         console.log(`🔢 Vectorizing ${chunks.length} chunks for agent ${agentId}`);
 
@@ -229,49 +261,109 @@ router.post('/vectorize', async (req: Request, res: Response) => {
 
         await query(
             `INSERT INTO knowledge_bases (id, "agentId", filename, "fileUrl", "fileSize", "mimeType", created_at, updated_at, status)
-             VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), 'VECTORIZED')`,
+             VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), 'PENDING')`,
             [kbId, agentId, filename, `chroma://agent_${agentId}`, finalFileSize, finalMimeType]
         );
 
-        // Convert to DocumentChunk format for Chroma
-        const documentChunks = chunks.map((chunk, i) => ({
-            id: `${agentId}_${filename}_${chunk.index}_${Date.now()}`,
-            content: chunk.text,
-            metadata: {
-                source: filename,
-                chunkIndex: chunk.index,
-                mimeType: finalMimeType,
-                agentId,
-                userId,
-                knowledgeBaseId: kbId,
-            },
-        }));
+        // ===== Contextual Enrichment =====
+        let enrichmentStats = { chunksEnriched: 0, chunksFailed: 0, totalTokensUsed: 0, conflictsFound: 0, conflictChunkIndices: [] as number[] };
+        let enrichmentResults: { context: string | null; hasConflictMarker: boolean; tokensUsed: number }[] = [];
 
-        // Add to Chroma
+        if (fullText && fullText.length > 0) {
+            console.log(`🧠 [Enrichment] Starting contextual enrichment for ${chunks.length} chunks`);
+            const enrichment = await enrichChunksWithContext(fullText, chunks);
+            enrichmentResults = enrichment.results;
+            enrichmentStats = enrichment.stats;
+        } else {
+            // No fullText — skip enrichment, fill with nulls
+            enrichmentResults = chunks.map(() => ({ context: null, hasConflictMarker: false, tokensUsed: 0 }));
+        }
+
+        // Convert to DocumentChunk format for Chroma (with enriched text)
+        const documentChunks = chunks.map((chunk, i) => {
+            const enrichedContext = enrichmentResults[i]?.context || null;
+            return {
+                id: `${agentId}_${filename}_${chunk.index}_${Date.now()}`,
+                content: buildEnrichedText(chunk.text, enrichedContext),
+                metadata: {
+                    source: filename,
+                    chunkIndex: chunk.index,
+                    mimeType: finalMimeType,
+                    agentId,
+                    userId,
+                    knowledgeBaseId: kbId,
+                },
+            };
+        });
+
+        // Add to Chroma (enriched text for better semantic search)
         await chromaService.addDocuments(agentId, documentChunks);
 
         console.log(`✅ Added ${chunks.length} vectors to Chroma collection agent_${agentId}`);
 
-        // Save chunks to document_chunks table
-        // We use a transaction conceptually, but here sequential inserts for simplicity
+        // Save chunks to document_chunks table (original text + context separately)
         if (chunks.length > 0) {
-            // sequential insert
-            const insertPromises = chunks.map(chunk =>
-                query(
-                    `INSERT INTO document_chunks (id, "knowledgeBaseId", content, chunk_index, created_at, updated_at)
-                     VALUES ($1, $2, $3, $4, NOW(), NOW())`,
-                    [crypto.randomUUID(), kbId, chunk.text, chunk.index]
-                )
-            );
+            const insertPromises = chunks.map((chunk, i) => {
+                const context = enrichmentResults[i]?.context || null;
+                return query(
+                    `INSERT INTO document_chunks (id, "knowledgeBaseId", content, context, chunk_index, search_vector, created_at, updated_at)
+                     VALUES ($1, $2, $3, $4, $5, to_tsvector('simple', $3), NOW(), NOW())`,
+                    [crypto.randomUUID(), kbId, chunk.text, context, chunk.index]
+                );
+            });
 
             await Promise.all(insertPromises);
         }
 
-        // ===== NEW: Deduct PU after successful vectorization =====
-        const deductSuccess = await deductPuBalance(userId, chargeInfo.puCost, {
+        // Mark as VECTORIZED after successful Chroma + DB insert
+        await query(
+            `UPDATE knowledge_bases SET status = 'VECTORIZED', updated_at = NOW() WHERE id = $1`,
+            [kbId]
+        );
+
+        // Auto-create knowledge_conflicts for chunks with conflict markers
+        if (enrichmentStats.conflictsFound > 0 && enrichmentStats.conflictChunkIndices.length > 0) {
+            try {
+                for (const chunkIdx of enrichmentStats.conflictChunkIndices) {
+                    const chunk = chunks.find(c => c.index === chunkIdx);
+                    const enrichResult = enrichmentResults[chunkIdx];
+                    if (!chunk || !enrichResult?.context) continue;
+
+                    await query(
+                        `INSERT INTO knowledge_conflicts (id, user_id, agent_id, topic, details, status, detected_at)
+                         VALUES ($1, $2, $3, $4, $5, 'NEW', NOW())`,
+                        [
+                            crypto.randomUUID(),
+                            userId,
+                            agentId,
+                            `Возможное противоречие в "${filename}" (чанк ${chunkIdx})`,
+                            JSON.stringify({
+                                source: 'contextual_enrichment',
+                                filename,
+                                chunk_index: chunkIdx,
+                                chunk_text: chunk.text.slice(0, 500),
+                                enrichment_context: enrichResult.context,
+                                chunks_involved: [{ chunk_id: null, chunk_index: chunkIdx, knowledge_base_id: kbId }],
+                            }),
+                        ]
+                    );
+                }
+                console.log(`⚠️ Created ${enrichmentStats.conflictsFound} conflict records`);
+            } catch (conflictErr: any) {
+                console.warn(`Failed to create conflict records:`, conflictErr.message);
+            }
+        }
+
+        // ===== Deduct PU after successful vectorization =====
+        // Add enrichment token cost to PU charge
+        const enrichmentPuCost = enrichmentStats.totalTokensUsed / 1000; // rough PU estimate
+        const totalPuCost = chargeInfo.puCost + enrichmentPuCost;
+
+        const deductSuccess = await deductPuBalance(userId, totalPuCost, {
             source: 'KB_UPLOAD',
             filename,
             chargeReason: chargeInfo.reason,
+            enrichmentTokens: enrichmentStats.totalTokensUsed,
         });
 
         if (!deductSuccess) {
@@ -302,12 +394,28 @@ router.post('/vectorize', async (req: Request, res: Response) => {
             filename,
             chunksVectorized: chunks.length,
             knowledgeBaseId: kbId,
-            puCharged: chargeInfo.puCost,      // 🎁 NEW
-            chargeReason: chargeInfo.reason,   // 🎁 NEW
-            chargePercentage: chargeInfo.chargePercentage, // 🎁 NEW
+            puCharged: totalPuCost,
+            chargeReason: chargeInfo.reason,
+            chargePercentage: chargeInfo.chargePercentage,
+            enrichment: {
+                chunksEnriched: enrichmentStats.chunksEnriched,
+                chunksFailed: enrichmentStats.chunksFailed,
+                tokensUsed: enrichmentStats.totalTokensUsed,
+                conflictsFound: enrichmentStats.conflictsFound,
+            },
         });
     } catch (error: any) {
         console.error('Vectorize error:', error.message);
+        // Try to mark KB record as ERROR if it was created
+        try {
+            const { agentId, filename } = req.body || {};
+            if (agentId && filename) {
+                await query(
+                    `UPDATE knowledge_bases SET status = 'ERROR', updated_at = NOW() WHERE "agentId" = $1 AND filename = $2 AND status = 'PENDING'`,
+                    [agentId, filename]
+                );
+            }
+        } catch (_) { /* best effort */ }
         return res.status(500).json({
             error: 'Failed to vectorize chunks',
             message: error.message,
@@ -343,8 +451,8 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
 
         // Save to knowledge_bases table
         await query(
-            `INSERT INTO knowledge_bases (id, agent_id, filename, file_url, file_size, mime_type, created_at)
-       VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, NOW())`,
+            `INSERT INTO knowledge_bases (id, "agentId", filename, "fileUrl", "fileSize", "mimeType", created_at, updated_at, status)
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, NOW(), NOW(), 'VECTORIZED')`,
             [agentId, file.originalname, `chroma://agent_${agentId}`, file.size, file.mimetype]
         );
 
@@ -454,8 +562,8 @@ router.get('/:agentId/info', async (req: Request, res: Response) => {
         const chromaInfo = await chromaService.getCollectionInfo(agentId);
 
         const knowledgeBases = await query(
-            `SELECT id, filename, file_size, mime_type, created_at 
-       FROM knowledge_bases WHERE agent_id = $1 ORDER BY created_at DESC`,
+            `SELECT id, filename, "fileSize", "mimeType", created_at
+       FROM knowledge_bases WHERE "agentId" = $1 ORDER BY created_at DESC`,
             [agentId]
         );
 
@@ -481,7 +589,7 @@ router.delete('/:agentId', async (req: Request, res: Response) => {
         await chromaService.deleteCollection(agentId);
 
         await query(
-            `DELETE FROM knowledge_bases WHERE agent_id = $1`,
+            `DELETE FROM knowledge_bases WHERE "agentId" = $1`,
             [agentId]
         );
 

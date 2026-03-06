@@ -80,10 +80,26 @@ model_list:
       model: openrouter/anthropic/claude-3.5-haiku
       api_key: os.environ/OPENROUTER_KEY
 
+  - model_name: openrouter-claude-sonnet-4-6
+    litellm_params:
+      model: openrouter/anthropic/claude-sonnet-4-6
+      api_key: os.environ/OPENROUTER_KEY
+
+router_settings:
+  routing_strategy: "simple-shuffle"
+  num_retries: 3
+  timeout: 120
+  retry_after: 5
+  allowed_fails: 2
+
 litellm_settings:
   drop_params: true
   set_verbose: false
   callbacks: ["langsmith", "litellm_callbacks.postgres_usage_logger"]
+  fallbacks:
+    - {"openrouter-claude-3-5-sonnet": ["claude-sonnet-4-6", "claude-haiku-4-5", "gpt-4o-mini"]}
+    - {"claude-sonnet-4-6": ["openrouter-claude-sonnet-4-6", "claude-haiku-4-5", "gpt-4o-mini"]}
+    - {"openrouter-claude-sonnet-4-6": ["claude-sonnet-4-6", "claude-haiku-4-5", "gpt-4o-mini"]}
 
 environment_variables:
   LANGSMITH_API_KEY: os.environ/LANGSMITH_API_KEY

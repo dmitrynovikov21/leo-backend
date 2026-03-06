@@ -65,7 +65,7 @@ class DockerService {
         // Build identity instruction from behavior
         const behavior = agentConfig.behavior || {};
         const identityInstruction = behavior.displayName
-            ? `Ты — ${behavior.displayName}.`
+            ? `## ИДЕНТИЧНОСТЬ\nТы — ${behavior.displayName}. Представляйся этим именем. Говори от первого лица как представитель компании.`
             : '';
 
         // Build environment variables

@@ -179,11 +179,11 @@ class LLMClient {
         let system = systemPrompt;
 
         if (summary) {
-            system += `\n\n# КРАТКОЕ РЕЗЮМЕ ПРЕДЫДУЩЕГО ДИАЛОГА:\n${summary}`;
+            system += `\n\n# КОНТЕКСТ ПРЕДЫДУЩЕГО ДИАЛОГА\nРезюме ранее обсуждённого (используй для контекста, но не повторяй клиенту):\n${summary}`;
         }
 
         if (ragContext) {
-            system += `\n\n# РЕЛЕВАНТНАЯ ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ:\n${ragContext}`;
+            system += `\n\n# РЕЛЕВАНТНАЯ ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ\nОтвечай СТРОГО по этим данным. Если вопрос клиента не покрыт — скажи что нет информации.\n<known_information>\n${ragContext}\n</known_information>`;
         }
 
         messages.push({ role: 'system', content: system });

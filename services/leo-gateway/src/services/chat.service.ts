@@ -5,10 +5,12 @@
  */
 
 import { query, queryOne } from '../db';
+import { config } from '../config';
 import { litellmService, ChatMessage, ToolCall } from './litellm.service';
 import { hybridSearchService } from './hybrid-search.service';
 import { promptService } from './prompt.service';
 import { agentTools, executeReportConflict, ReportConflictParams } from './agent-tools.service';
+import { stripContextPrefix } from './contextual-retrieval.service';
 
 export type MessageType = 'HUMAN' | 'AI' | 'SYSTEM' | 'TOOL';
 
@@ -55,16 +57,17 @@ function sessionToUserId(sessionId: string): number {
 
 class ChatService {
 
-    async getAgentConfig(agentId: string): Promise<{ systemPrompt: string; name: string; temperature: number } | null> {
+    async getAgentConfig(agentId: string): Promise<{ systemPrompt: string; name: string; temperature: number; model: string | null } | null> {
         const agent = await queryOne<{
             systemPrompt: string;
             name: string;
             display_name: string | null;
             temperature: number;
+            model: string | null;
             tone: string[] | null;
             guardrails: { id: string; rule: string }[] | null;
         }>(
-            `SELECT "systemPrompt", name, display_name, temperature, tone, guardrails FROM agents WHERE id = $1`,
+            `SELECT "systemPrompt", name, display_name, temperature, model, tone, guardrails FROM agents WHERE id = $1`,
             [agentId]
         );
 
@@ -76,7 +79,7 @@ class ChatService {
 
         // Add agent identity
         if (agent.display_name) {
-            fullPrompt += `\n\nТы — ${agent.display_name}.`;
+            fullPrompt += `\n\n## ИДЕНТИЧНОСТЬ\nТы — ${agent.display_name}. Представляйся этим именем. Говори от первого лица как представитель компании.`;
         }
 
         // Add agent-specific system prompt
@@ -86,7 +89,7 @@ class ChatService {
 
         // Add tone instructions
         if (agent.tone && agent.tone.length > 0) {
-            fullPrompt += `\n\n## ТОН ОБЩЕНИЯ\nИспользуй следующий тон в общении: ${agent.tone.join(', ')}.`;
+            fullPrompt += `\n\n## ТОН ОБЩЕНИЯ\nТвой тон: ${agent.tone.join(', ')}. Поддерживай этот стиль во всех ответах. Не переключайся на другой тон даже если клиент грубит.`;
         }
 
         // Add guardrails as strict rules
@@ -100,10 +103,15 @@ class ChatService {
         // Add conflict detection protocol
         fullPrompt += `\n\n${await promptService.getPrompt('conflict_detection_protocol')}`;
 
+        if (fullPrompt.length > 10000) {
+            console.warn(`[${agentId}] System prompt is ${fullPrompt.length} chars (~${Math.round(fullPrompt.length / 4)} tokens). Consider reducing to <10000 chars for cost/speed.`);
+        }
+
         return {
             systemPrompt: fullPrompt,
             name: agent.name,
             temperature: agent.temperature ?? 0.5,
+            model: agent.model || null,
         };
     }
 
@@ -182,9 +190,11 @@ class ChatService {
                 .map((r, i) => {
                     const id = r.metadata?.knowledgeBaseId || r.metadata?.id || 'unknown';
                     const filename = r.metadata?.source || r.metadata?.filename || 'Unknown File';
+                    // Strip [CONTEXT]: prefix from Chroma results — agent sees clean original text
+                    const cleanContent = stripContextPrefix(r.content);
 
                     return `<document index="${i + 1}" id="${id}" filename="${filename}">
-${r.content}
+${cleanContent}
 </document>`;
                 })
                 .join('\n\n');
@@ -231,17 +241,17 @@ Content: ${n.content}`)
         let system = systemPrompt;
 
         if (summary) {
-            system += `\n\n# КРАТКОЕ РЕЗЮМЕ ПРЕДЫДУЩЕГО ДИАЛОГА:\n${summary}`;
+            system += `\n\n# КОНТЕКСТ ПРЕДЫДУЩЕГО ДИАЛОГА\nРезюме ранее обсуждённого (используй для контекста, но не повторяй клиенту):\n${summary}`;
         }
 
         // RAG context from files (lower priority)
         if (ragContext) {
-            system += `\n\n# РЕЛЕВАНТНАЯ ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ:\n<known_information>\n${ragContext}\n</known_information>`;
+            system += `\n\n# РЕЛЕВАНТНАЯ ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ\nОтвечай СТРОГО по этим данным. Если вопрос клиента не покрыт — скажи что нет информации.\n<known_information>\n${ragContext}\n</known_information>`;
         }
 
         // Notes at the END for recency bias (HIGH PRIORITY)
         if (notesContext) {
-            system += `\n\n# IMPORTANT UPDATES (High Priority):\n${notesContext}`;
+            system += `\n\n# IMPORTANT UPDATES (НАИВЫСШИЙ ПРИОРИТЕТ)\nЭти данные актуальнее базы знаний. При противоречии с <known_information> — используй данные отсюда.\n${notesContext}`;
         }
 
         messages.push({ role: 'system', content: system });
@@ -330,7 +340,7 @@ Content: ${n.content}`)
         const response = await litellmService.chatCompletion({
             userId: trackingUserId,
             agentId: agentId,
-            model: 'claude-sonnet-4-6',
+            model: agentConfig.model || config.defaultLlmModel,
             messages: chatMessages,
             temperature: agentConfig.temperature,
             tools: agentTools,
@@ -370,10 +380,10 @@ Content: ${n.content}`)
             const followUpResponse = await litellmService.chatCompletion({
                 userId: trackingUserId,
                 agentId: agentId,
-                model: 'claude-sonnet-4-6',
+                model: agentConfig.model || config.defaultLlmModel,
                 messages: updatedMessages,
                 temperature: agentConfig.temperature,
-                tools: agentTools, // Required by Anthropic when tool messages are present
+                tools: agentTools,
             });
 
             aiResponse = followUpResponse.choices[0]?.message?.content || 'No response after tools';

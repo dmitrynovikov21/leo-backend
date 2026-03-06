@@ -28,6 +28,9 @@ Thumbs.db
 .env.test.local
 .env.production.local
 
+# Deploy
+deploy.sh
+
 # Build outputs
 dist/
 build/
