@@ -1,3 +1,4 @@
+import { config } from '../config';
 /**
  * System Prompt Routes
  * Provides API access to platform-level prompts and assembled agent prompts
@@ -33,7 +34,7 @@ router.get('/:slug', async (req: Request, res: Response) => {
         console.error('Get system prompt error:', error.message);
         return res.status(500).json({
             error: 'Failed to get system prompt',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -53,7 +54,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
         console.error('Refresh cache error:', error.message);
         return res.status(500).json({
             error: 'Failed to refresh cache',
-            message: error.message
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -126,7 +127,7 @@ router.get('/agents/:agentId/prompt-preview', async (req: Request, res: Response
         console.error('Get prompt preview error:', error.message);
         return res.status(500).json({
             error: 'Failed to get prompt preview',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });

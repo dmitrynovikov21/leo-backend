@@ -1,3 +1,4 @@
+import { config } from '../config';
 /**
  * Agent Chat Routes
  * API for manual agent testing (without Telegram)
@@ -53,13 +54,13 @@ router.post('/:agentId/chat', async (req: Request, res: Response) => {
         if (error.message.includes('not found')) {
             return res.status(404).json({
                 error: 'Agent not found',
-                message: error.message,
+                ...(config.isDev && { message: error.message }),
             });
         }
 
         return res.status(500).json({
             error: 'Failed to process message',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -94,7 +95,7 @@ router.post('/:agentId/chat/reset', async (req: Request, res: Response) => {
         console.error('Session reset error:', error.message);
         return res.status(500).json({
             error: 'Failed to reset session',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -124,7 +125,7 @@ router.get('/:agentId/chat/history', async (req: Request, res: Response) => {
         console.error('Get history error:', error.message);
         return res.status(500).json({
             error: 'Failed to get history',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });

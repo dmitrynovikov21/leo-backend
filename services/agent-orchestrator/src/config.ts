@@ -7,6 +7,7 @@ const envSchema = z.object({
     AGENT_IMAGE: z.string().default('leo-agent-runtime:latest'),
     DOCKER_NETWORK: z.string().default('leo_default'),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+    API_SECRET: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -24,4 +25,5 @@ export const config = {
     dockerNetwork: parsed.data.DOCKER_NETWORK,
     nodeEnv: parsed.data.NODE_ENV,
     isDev: parsed.data.NODE_ENV === 'development',
+    apiSecret: parsed.data.API_SECRET,
 };

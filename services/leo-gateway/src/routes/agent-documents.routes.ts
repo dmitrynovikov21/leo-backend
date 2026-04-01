@@ -1,3 +1,4 @@
+import { config } from '../config';
 import { Router, Request, Response } from 'express';
 import { query, queryOne } from '../db';
 import { chromaService } from '../services/chroma.service';

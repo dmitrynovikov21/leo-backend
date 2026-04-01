@@ -7,6 +7,7 @@ const envSchema = z.object({
     SYSTEM_PROMPT: z.string().default('You are a helpful assistant.'),
     TELEGRAM_BOT_TOKEN: z.string().default(''),
     GATEWAY_URL: z.string().default('http://leo-gateway:8080'),
+    API_SECRET: z.string().optional(),
     DATABASE_URL: z.string(),
     // LangSmith
     LANGCHAIN_TRACING_V2: z.string().optional(),
@@ -51,6 +52,7 @@ export const config = {
     systemPrompt: parsed.data.SYSTEM_PROMPT,
     telegramBotToken: parsed.data.TELEGRAM_BOT_TOKEN,
     gatewayUrl: parsed.data.GATEWAY_URL,
+    apiSecret: parsed.data.API_SECRET,
     databaseUrl: parsed.data.DATABASE_URL,
     // LangSmith
     langchainTracingV2: parsed.data.LANGCHAIN_TRACING_V2 === 'true',

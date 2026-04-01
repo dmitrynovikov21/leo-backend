@@ -1,6 +1,7 @@
 import mammoth from 'mammoth';
 import * as xlsx from 'xlsx';
 import pdf from 'pdf-parse';
+import JSZip from 'jszip';
 import { getTextExtractor } from 'office-text-extractor';
 import { extractTextFromImage, IMAGE_MIME_TYPES } from './ocr.service';
 
@@ -63,12 +64,75 @@ function splitIntoChunks(text: string, source: string, mimeType: string): Docume
     return chunks;
 }
 
-export async function parseDocx(buffer: Buffer, filename: string): Promise<ParsedDocument> {
-    const result = await mammoth.extractRawText({ buffer });
-    const content = result.value;
-    const chunks = splitIntoChunks(content, filename, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+/**
+ * Fallback: распаковываем docx как ZIP, достаём word/document.xml и стрипаем теги
+ */
+async function parseDocxViaZip(buffer: Buffer, filename: string): Promise<string> {
+    const zip = await JSZip.loadAsync(buffer);
+    const docXml = zip.file('word/document.xml');
+    if (!docXml) {
+        throw new Error('word/document.xml не найден в архиве');
+    }
+    const xml = await docXml.async('text');
 
-    return { text: content, content, chunks };
+    // Заменяем параграфы и переносы строк
+    let text = xml.replace(/<\/w:p>/g, '\n');
+    text = text.replace(/<w:br[^>]*\/>/g, '\n');
+    text = text.replace(/<w:tab[^>]*\/>/g, '\t');
+    // Убираем все XML-теги
+    text = text.replace(/<[^>]+>/g, '');
+    // Декодируем XML-сущности
+    text = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+    // Чистим пустые строки
+    text = text.split('\n').map(l => l.trim()).filter(l => l.length > 0).join('\n');
+
+    return text;
+}
+
+export async function parseDocx(buffer: Buffer, filename: string): Promise<ParsedDocument> {
+    const mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+    // Попытка 1: mammoth
+    try {
+        const result = await mammoth.extractRawText({ buffer });
+        if (result.value && result.value.trim().length > 0) {
+            const content = result.value;
+            const chunks = splitIntoChunks(content, filename, mimeType);
+            return { text: content, content, chunks };
+        }
+    } catch (mammothErr: any) {
+        console.warn(`⚠️ Mammoth не смог обработать ${filename}: ${mammothErr.message}`);
+    }
+
+    // Попытка 2: ручной парсинг через JSZip
+    try {
+        console.log(`🔄 Пробуем JSZip-парсинг для ${filename}...`);
+        const content = await parseDocxViaZip(buffer, filename);
+        if (content.trim().length > 0) {
+            const chunks = splitIntoChunks(content, filename, mimeType);
+            return { text: content, content, chunks };
+        }
+    } catch (zipErr: any) {
+        console.warn(`⚠️ JSZip-парсинг не сработал для ${filename}: ${zipErr.message}`);
+    }
+
+    // Попытка 3: office-text-extractor
+    try {
+        console.log(`🔄 Пробуем office-text-extractor для ${filename}...`);
+        const extractor = getTextExtractor();
+        const content = await extractor.extractText({
+            input: buffer,
+            type: 'buffer',
+        });
+        if (content.trim().length > 0) {
+            const chunks = splitIntoChunks(content, filename, mimeType);
+            return { text: content, content, chunks };
+        }
+    } catch (extErr: any) {
+        console.warn(`⚠️ office-text-extractor не сработал для ${filename}: ${extErr.message}`);
+    }
+
+    throw new Error(`Не удалось распарсить документ ${filename}. Попробуйте сохранить файл заново в формате .docx`);
 }
 
 export async function parseXlsx(buffer: Buffer, filename: string): Promise<ParsedDocument> {
@@ -112,8 +176,7 @@ export async function parseMarkdown(buffer: Buffer, filename: string): Promise<P
     // Remove inline code
     text = text.replace(/`[^`]*`/g, '');
 
-    // Convert headers to plain text (strip # symbols)
-    text = text.replace(/^#{1,6}\s+/gm, '');
+    // Keep # headers — smart-splitter uses ### and ## as semantic separators
 
     // Convert links [text](url) → text
     text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
@@ -262,9 +325,33 @@ export async function parseDocument(
         case 'text/plain':
             return parseText(buffer, filename);
 
-        default:
-            // Try to parse as text
-            return parseText(buffer, filename);
+        case 'application/octet-stream':
+        default: {
+            // Fallback: detect by file extension
+            const ext = filename.split('.').pop()?.toLowerCase();
+            switch (ext) {
+                case 'xlsx': case 'xls':
+                    return parseXlsx(buffer, filename);
+                case 'docx': case 'doc':
+                    return parseDocx(buffer, filename);
+                case 'pdf':
+                    return parsePdf(buffer, filename);
+                case 'csv':
+                    return parseCsv(buffer, filename);
+                case 'json':
+                    return parseJson(buffer, filename);
+                case 'html': case 'htm':
+                    return parseHtml(buffer, filename);
+                case 'pptx': case 'ppt':
+                    return parsePptx(buffer, filename);
+                case 'md': case 'markdown':
+                    return parseMarkdown(buffer, filename);
+                case 'png': case 'jpg': case 'jpeg': case 'webp': case 'gif': case 'bmp': case 'tiff':
+                    return parseImage(buffer, filename, mimeType);
+                default:
+                    return parseText(buffer, filename);
+            }
+        }
     }
 }
 

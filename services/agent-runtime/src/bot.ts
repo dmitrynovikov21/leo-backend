@@ -13,6 +13,73 @@ function stripContextPrefix(text: string): string {
     return text.slice(separatorIndex + 2);
 }
 
+/**
+ * Telegram поддерживает: <b>, <i>, <u>, <s>, <code>, <pre>, <a href="">, <blockquote>, <tg-spoiler>
+ * Конвертируем Markdown → HTML, убираем невалидные теги, экранируем спецсимволы.
+ */
+function formatForTelegram(text: string): string {
+    // 1. Конвертируем Markdown в HTML
+    // Блоки кода (```)
+    text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_m, lang, code) => {
+        const escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return lang
+            ? `<pre><code class="language-${lang}">${escaped}</code></pre>`
+            : `<pre>${escaped}</pre>`;
+    });
+
+    // Инлайн код (`)
+    text = text.replace(/`([^`]+)`/g, (_m, code) => {
+        const escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return `<code>${escaped}</code>`;
+    });
+
+    // Жирный (**text** или __text__)
+    text = text.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    text = text.replace(/__(.+?)__/g, '<b>$1</b>');
+
+    // Курсив (*text* или _text_) — но не внутри слов с подчёркиваниями
+    text = text.replace(/(?<!\w)\*([^*]+?)\*(?!\w)/g, '<i>$1</i>');
+    text = text.replace(/(?<!\w)_([^_]+?)_(?!\w)/g, '<i>$1</i>');
+
+    // Зачёркнутый (~~text~~)
+    text = text.replace(/~~(.+?)~~/g, '<s>$1</s>');
+
+    // Markdown заголовки (### text) → жирный
+    text = text.replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>');
+
+    // 2. Экранируем HTML-спецсимволы вне тегов
+    // Сначала собираем все валидные теги, потом экранируем остальное
+    const allowedTags = ['b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'code', 'pre', 'a', 'blockquote', 'tg-spoiler'];
+    const tagPattern = allowedTags.map(t => `</?${t}(?:\\s[^>]*)?>` ).join('|');
+    const tagRegex = new RegExp(`(${tagPattern})`, 'gi');
+
+    // Разбиваем по валидным тегам
+    const parts = text.split(tagRegex);
+    text = parts.map(part => {
+        if (tagRegex.test(part)) {
+            tagRegex.lastIndex = 0;
+            return part; // Оставляем тег как есть
+        }
+        // Экранируем & < > только вне тегов (но не трогаем уже экранированные)
+        return part
+            .replace(/&(?!amp;|lt;|gt;|quot;)/g, '&amp;')
+            .replace(/<(?!\/?(?:b|strong|i|em|u|ins|s|strike|del|code|pre|a|blockquote|tg-spoiler)[\s>])/gi, '&lt;')
+            .replace(/(?<![\s"=\w])>/g, '&gt;');
+    }).join('');
+
+    // 3. Убираем незакрытые/невалидные теги — простая проверка парности
+    for (const tag of ['b', 'i', 'u', 's', 'code']) {
+        const openCount = (text.match(new RegExp(`<${tag}>`, 'g')) || []).length;
+        const closeCount = (text.match(new RegExp(`</${tag}>`, 'g')) || []).length;
+        if (openCount !== closeCount) {
+            // Убираем все вхождения этого тега
+            text = text.replace(new RegExp(`</?${tag}>`, 'g'), '');
+        }
+    }
+
+    return text;
+}
+
 // Debounce storage: userId -> { timeout, messages[] }
 const pendingMessages = new Map<number, {
     timeout: NodeJS.Timeout;
@@ -53,6 +120,20 @@ async function buildFullSystemPrompt(): Promise<string> {
         for (const g of config.guardrails) {
             prompt += `- ${g.rule}\n`;
         }
+    }
+
+    // Add conversation examples and source citation from DB
+    const agentRow = await queryOne<{ conversation_examples: string | null; show_sources: boolean }>(
+        `SELECT conversation_examples, show_sources FROM agents WHERE id = $1`,
+        [config.agentId]
+    );
+    if (agentRow?.conversation_examples) {
+        prompt += `\n\n## ЭТАЛОННЫЙ ПРИМЕР РАЗГОВОРА\nОриентируйся на этот пример при формулировке ответов:\n${agentRow.conversation_examples}`;
+    }
+
+    // Add source citation instruction
+    if (agentRow?.show_sources) {
+        prompt += `\n\n## ИСТОЧНИКИ\nВ конце каждого ответа, основанного на базе знаний, указывай источник информации в формате:\nИсточник: имя_файла.docx\nЕсли информация из нескольких файлов — перечисли все. Если ответ не из базы знаний — не указывай источник.`;
     }
 
     // Add conflict detection protocol from DB
@@ -143,11 +224,12 @@ Content: ${cleanContent}`;
         // Save AI message
         await memoryManager.saveMessage(userId, 'AI', response);
 
-        // Send response
-        await ctx.reply(response, {
-            parse_mode: 'Markdown',
+        // Форматируем и отправляем
+        const formatted = formatForTelegram(response);
+        await ctx.reply(formatted, {
+            parse_mode: 'HTML',
         }).catch(async () => {
-            // If markdown fails, send as plain text
+            // Если HTML не прошёл — отправляем без форматирования
             await ctx.reply(response);
         });
 
@@ -189,17 +271,10 @@ export function createBot(): Bot<Context> {
 
     // Start command
     bot.command('start', async (ctx) => {
-        // Use custom welcome message if set, otherwise generate default
-        const welcomeMessage = config.welcomeMessage || `👋 Привет! Я ${config.agentName}.
-
-Я готов помочь тебе. Просто напиши мне сообщение, и я отвечу!
-
-⏱️ Я подожду ${config.debounceMs / 1000} секунд после твоего последнего сообщения, чтобы ты мог дописать мысль.
-
-/clear - очистить историю диалога
-/help - показать это сообщение`;
-
-        await ctx.reply(welcomeMessage);
+        if (config.welcomeMessage) {
+            await ctx.reply(config.welcomeMessage);
+        }
+        // If no welcome message configured, do nothing
     });
 
     // Help command

@@ -1,3 +1,4 @@
+import { config } from '../config';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { pool } from '../db';
@@ -71,7 +72,7 @@ router.post('/', async (req: Request, res: Response) => {
         console.error('Log conflict error:', error.message);
         return res.status(500).json({
             error: 'Failed to log conflict',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -118,7 +119,7 @@ router.get('/', async (req: Request, res: Response) => {
         console.error('Get conflicts error:', error.message);
         return res.status(500).json({
             error: 'Failed to get conflicts',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -160,7 +161,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
         console.error('Update conflict error:', error.message);
         return res.status(500).json({
             error: 'Failed to update conflict',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -186,7 +187,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
         console.error('Delete conflict error:', error.message);
         return res.status(500).json({
             error: 'Failed to delete conflict',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });

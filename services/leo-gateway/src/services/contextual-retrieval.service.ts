@@ -7,7 +7,7 @@
 import { litellmService } from './litellm.service';
 import { query } from '../db';
 
-const ENRICHMENT_MODEL = 'gpt-4o-mini';
+const ENRICHMENT_MODEL = 'claude-sonnet-4-6';
 const MAX_DOC_CHARS = 48000; // Truncate docs longer than this for context window safety
 const ENRICHMENT_TEMPERATURE = 0;
 const ENRICHMENT_MAX_TOKENS = 300;

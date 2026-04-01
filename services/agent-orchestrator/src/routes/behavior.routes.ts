@@ -1,3 +1,4 @@
+import { config } from '../config';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { behaviorService } from '../services/behavior.service';
@@ -9,6 +10,7 @@ const updateBehaviorSchema = z.object({
     displayName: z.string().optional(),
     avatarEmoji: z.string().max(10).optional(),
     temperature: z.number().min(0).max(2).optional(),
+    showSources: z.boolean().optional(),
     debounceMs: z.number().min(500).max(30000).optional(),
     welcomeMessage: z.string().max(1000).optional(),
     tone: z.array(z.string()).optional(),
@@ -36,8 +38,10 @@ router.get('/:id/behavior', async (req: Request, res: Response) => {
             avatarEmoji: behavior.avatarEmoji,
             displayName: behavior.displayName,
             temperature: behavior.temperature,
+            showSources: behavior.showSources ?? false,
             debounceMs: behavior.debounceMs,
             welcomeMessage: behavior.welcomeMessage,
+            systemPrompt: behavior.systemPrompt,
             tone: behavior.tone,
             guardrails: behavior.guardrails,
         });
@@ -45,7 +49,7 @@ router.get('/:id/behavior', async (req: Request, res: Response) => {
         console.error('Get behavior error:', error.message);
         return res.status(500).json({
             error: 'Failed to get behavior',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -73,8 +77,10 @@ router.patch('/:id/behavior', async (req: Request, res: Response) => {
             avatarEmoji: behavior.avatarEmoji,
             displayName: behavior.displayName,
             temperature: behavior.temperature,
+            showSources: behavior.showSources ?? false,
             debounceMs: behavior.debounceMs,
             welcomeMessage: behavior.welcomeMessage,
+            systemPrompt: behavior.systemPrompt,
             tone: behavior.tone,
             guardrails: behavior.guardrails,
         });
@@ -82,7 +88,7 @@ router.patch('/:id/behavior', async (req: Request, res: Response) => {
         console.error('Update behavior error:', error.message);
         return res.status(500).json({
             error: 'Failed to update behavior',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -113,7 +119,7 @@ router.get('/:id/prompts', async (req: Request, res: Response) => {
         console.error('Get prompts error:', error.message);
         return res.status(500).json({
             error: 'Failed to get prompts',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -148,7 +154,7 @@ router.post('/:id/prompts', async (req: Request, res: Response) => {
         console.error('Create prompt error:', error.message);
         return res.status(500).json({
             error: 'Failed to create prompt',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -188,7 +194,7 @@ router.patch('/:id/prompts/:versionId', async (req: Request, res: Response) => {
         console.error('Update prompt error:', error.message);
         return res.status(500).json({
             error: 'Failed to update prompt',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -215,7 +221,7 @@ router.patch('/:id/prompts/:versionId/activate', async (req: Request, res: Respo
         console.error('Activate prompt error:', error.message);
         return res.status(500).json({
             error: 'Failed to activate prompt',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });

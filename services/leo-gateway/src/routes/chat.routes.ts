@@ -1,3 +1,4 @@
+import { config } from '../config';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { litellmService, ChatMessage } from '../services/litellm.service';
@@ -9,16 +10,13 @@ const router = Router();
 
 const chatCompletionSchema = z.object({
     userId: z.string(),
-    messages: z.array(
-        z.object({
-            role: z.enum(['system', 'user', 'assistant']),
-            content: z.string(),
-        })
-    ),
+    messages: z.array(z.any()), // Allow all message formats (system, user, assistant, tool, with tool_calls)
     model: z.string().optional(),
     temperature: z.number().min(0).max(2).optional(),
     max_tokens: z.number().positive().optional(),
     agentId: z.string().optional(),
+    tools: z.any().optional(),
+    tool_choice: z.any().optional(),
 });
 
 router.post('/completions', async (req: Request, res: Response) => {
@@ -32,7 +30,7 @@ router.post('/completions', async (req: Request, res: Response) => {
             });
         }
 
-        const { userId, messages, model, temperature, max_tokens, agentId } = parsed.data;
+        const { userId, messages, model, temperature, max_tokens, agentId, tools, tool_choice } = parsed.data;
 
         // check PU balance (Unified Balance System)
         const balanceInfo = await puChargingService.checkPuBalance(userId, 0.1); // check if has at least 0.1 PU
@@ -47,12 +45,14 @@ router.post('/completions', async (req: Request, res: Response) => {
 
         const startTime = Date.now();
         const response = await litellmService.chatCompletion({
-            userId,      // Pass userId for LiteLLM logging
-            agentId,     // Pass agentId for LiteLLM logging
+            userId,
+            agentId,
             model,
             messages: messages as ChatMessage[],
             temperature,
             max_tokens,
+            tools,
+            tool_choice,
         });
         const duration = Date.now() - startTime;
 
@@ -76,7 +76,7 @@ router.post('/completions', async (req: Request, res: Response) => {
         console.error('Chat completion error:', error.message);
         return res.status(500).json({
             error: 'Failed to process chat completion',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });

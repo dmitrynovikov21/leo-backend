@@ -5,8 +5,10 @@ export interface AgentBehavior {
     displayName: string | null;
     avatarEmoji: string | null;
     temperature: number;
+    showSources: boolean;
     debounceMs: number;
     welcomeMessage: string | null;
+    systemPrompt: string;
     tone: string[];
     guardrails: { id: string; rule: string }[];
 }
@@ -24,6 +26,7 @@ export interface UpdateBehaviorDto {
     displayName?: string;
     avatarEmoji?: string;
     temperature?: number;
+    showSources?: boolean;
     debounceMs?: number;
     welcomeMessage?: string;
     tone?: string[];
@@ -47,7 +50,7 @@ class BehaviorService {
      */
     async getBehavior(agentId: string): Promise<AgentBehavior | null> {
         const agent = await queryOne<any>(
-            `SELECT id, display_name, avatar_emoji, temperature, debounce_ms, welcome_message, tone, guardrails
+            `SELECT id, display_name, avatar_emoji, temperature, show_sources, debounce_ms, welcome_message, "systemPrompt", tone, guardrails
              FROM agents WHERE id = $1`,
             [agentId]
         );
@@ -59,8 +62,10 @@ class BehaviorService {
             displayName: agent.display_name,
             avatarEmoji: agent.avatar_emoji,
             temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.5,
+            showSources: agent.show_sources ?? false,
             debounceMs: agent.debounce_ms != null ? parseInt(agent.debounce_ms, 10) : 5000,
             welcomeMessage: agent.welcome_message,
+            systemPrompt: agent.systemPrompt || '',
             tone: agent.tone || [],
             guardrails: agent.guardrails || [],
         };
@@ -98,6 +103,10 @@ class BehaviorService {
         if (dto.temperature !== undefined) {
             updates.push(`temperature = $${paramIndex++}`);
             values.push(dto.temperature);
+        }
+        if (dto.showSources !== undefined) {
+            updates.push(`show_sources = $${paramIndex++}`);
+            values.push(dto.showSources);
         }
         if (dto.debounceMs !== undefined) {
             updates.push(`debounce_ms = $${paramIndex++}`);

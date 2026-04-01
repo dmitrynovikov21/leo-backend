@@ -1,3 +1,4 @@
+import { config } from '../config';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { quizPromptService } from '../services/quiz-prompt.service';
@@ -94,7 +95,7 @@ router.post('/generate-agent-prompt-from-quiz', async (req: Request, res: Respon
         return res.status(500).json({
             success: false,
             error: 'Failed to generate prompt',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });

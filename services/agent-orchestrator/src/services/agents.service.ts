@@ -1,6 +1,7 @@
 import { query, queryOne } from '../db';
 import { dockerService, ContainerInfo } from './docker.service';
 import { behaviorService } from './behavior.service';
+import { config } from '../config';
 
 export type AgentStatus = 'STOPPED' | 'STARTING' | 'RUNNING' | 'ERROR';
 
@@ -235,6 +236,9 @@ class AgentsService {
             const gatewayUrl = process.env.GATEWAY_URL || 'http://leo-gateway:8080';
             await fetch(`${gatewayUrl}/api/v1/documents/${id}/collection`, {
                 method: 'DELETE',
+                headers: {
+                    ...(config.apiSecret && { 'x-api-secret': config.apiSecret }),
+                },
             });
         } catch (error) {
             console.warn('Failed to delete Chroma collection:', error);

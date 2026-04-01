@@ -411,6 +411,11 @@ ${configContext}`;
                 model: 'claude-sonnet-4-6',
                 temperature: 0.7,
                 max_tokens: 2000,
+            }, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(config.apiSecret && { 'x-api-secret': config.apiSecret }),
+                },
             });
 
             const generatedPrompt = response.data?.choices?.[0]?.message?.content;

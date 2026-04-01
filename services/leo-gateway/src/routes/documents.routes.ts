@@ -1,3 +1,4 @@
+import { config } from '../config';
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
@@ -19,6 +20,17 @@ import {
 
 const router = Router();
 
+// Fix filename encoding: busboy decodes Content-Disposition filenames as Latin-1,
+// but browsers send UTF-8. Re-encode as Latin-1 bytes and decode as UTF-8.
+function fixFilename(name: string): string {
+    try {
+        const bytes = Buffer.from(name, 'latin1');
+        const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        if (decoded !== name) return decoded;
+    } catch { /* already valid UTF-8 */ }
+    return name;
+}
+
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
 const upload = multer({
@@ -27,6 +39,8 @@ const upload = multer({
         fileSize: 50 * 1024 * 1024, // 50MB max
     },
     fileFilter: (req, file, cb) => {
+        // Fix Cyrillic/non-ASCII filename encoding from busboy
+        file.originalname = fixFilename(file.originalname);
         const allowedMimes = [
             'application/pdf',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -118,10 +132,9 @@ router.post('/parse', upload.single('file'), async (req: Request, res: Response)
             })),
         });
     } catch (error: any) {
-        console.error('Document parse error:', error.message);
+        console.error('Ошибка парсинга документа:', error.message);
         return res.status(500).json({
-            error: 'Failed to parse document',
-            message: error.message,
+            error: error.message || 'Не удалось обработать документ',
         });
     }
 });
@@ -161,7 +174,7 @@ router.post('/parse-semantic', upload.single('file'), async (req: Request, res: 
         console.error('Semantic parse error:', error.message);
         return res.status(500).json({
             error: 'Failed to parse document semantically',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -228,9 +241,9 @@ router.post('/vectorize', async (req: Request, res: Response) => {
         let finalFileSize = fileSize;
         let finalMimeType = mimeType;
 
-        // 1. Check if document already exists
+        // 1. Check if document already exists (exclude PENDING records created by the leo app)
         const existingDocs = await query<{ id: string; fileSize: number; mimeType: string }>(
-            `SELECT id, "fileSize", "mimeType" FROM knowledge_bases WHERE "agentId" = $1 AND filename = $2`,
+            `SELECT id, "fileSize", "mimeType" FROM knowledge_bases WHERE "agentId" = $1 AND filename = $2 AND status != 'PENDING'`,
             [agentId, filename]
         );
 
@@ -249,9 +262,9 @@ router.post('/vectorize', async (req: Request, res: Response) => {
             // Delete from Chroma
             await chromaService.deleteDocuments(agentId, { source: filename });
 
-            // Delete from DB (cascades to chunks)
+            // Delete from DB (cascades to chunks) — only non-PENDING records
             await query(
-                `DELETE FROM knowledge_bases WHERE "agentId" = $1 AND filename = $2`,
+                `DELETE FROM knowledge_bases WHERE "agentId" = $1 AND filename = $2 AND status != 'PENDING'`,
                 [agentId, filename]
             );
         }
@@ -270,21 +283,28 @@ router.post('/vectorize', async (req: Request, res: Response) => {
         let enrichmentResults: { context: string | null; hasConflictMarker: boolean; tokensUsed: number }[] = [];
 
         if (fullText && fullText.length > 0) {
-            console.log(`🧠 [Enrichment] Starting contextual enrichment for ${chunks.length} chunks`);
-            const enrichment = await enrichChunksWithContext(fullText, chunks);
-            enrichmentResults = enrichment.results;
-            enrichmentStats = enrichment.stats;
+            try {
+                console.log(`🧠 [Enrichment] Starting contextual enrichment for ${chunks.length} chunks`);
+                const enrichment = await enrichChunksWithContext(fullText, chunks);
+                enrichmentResults = enrichment.results;
+                enrichmentStats = enrichment.stats;
+            } catch (enrichErr: any) {
+                console.warn(`⚠️ [Enrichment] Failed, continuing without enrichment:`, enrichErr.message);
+                enrichmentResults = chunks.map(() => ({ context: null, hasConflictMarker: false, tokensUsed: 0 }));
+            }
         } else {
-            // No fullText — skip enrichment, fill with nulls
             enrichmentResults = chunks.map(() => ({ context: null, hasConflictMarker: false, tokensUsed: 0 }));
         }
+
+        // Sanitize: remove null bytes (0x00) that PostgreSQL TEXT columns reject
+        const sanitize = (s: string | null) => s ? s.replace(/\0/g, '') : s;
 
         // Convert to DocumentChunk format for Chroma (with enriched text)
         const documentChunks = chunks.map((chunk, i) => {
             const enrichedContext = enrichmentResults[i]?.context || null;
             return {
                 id: `${agentId}_${filename}_${chunk.index}_${Date.now()}`,
-                content: buildEnrichedText(chunk.text, enrichedContext),
+                content: sanitize(buildEnrichedText(chunk.text, enrichedContext)) || '',
                 metadata: {
                     source: filename,
                     chunkIndex: chunk.index,
@@ -308,7 +328,7 @@ router.post('/vectorize', async (req: Request, res: Response) => {
                 return query(
                     `INSERT INTO document_chunks (id, "knowledgeBaseId", content, context, chunk_index, search_vector, created_at, updated_at)
                      VALUES ($1, $2, $3, $4, $5, to_tsvector('simple', $3), NOW(), NOW())`,
-                    [crypto.randomUUID(), kbId, chunk.text, context, chunk.index]
+                    [crypto.randomUUID(), kbId, sanitize(chunk.text), sanitize(context), chunk.index]
                 );
             });
 
@@ -321,37 +341,11 @@ router.post('/vectorize', async (req: Request, res: Response) => {
             [kbId]
         );
 
-        // Auto-create knowledge_conflicts for chunks with conflict markers
-        if (enrichmentStats.conflictsFound > 0 && enrichmentStats.conflictChunkIndices.length > 0) {
-            try {
-                for (const chunkIdx of enrichmentStats.conflictChunkIndices) {
-                    const chunk = chunks.find(c => c.index === chunkIdx);
-                    const enrichResult = enrichmentResults[chunkIdx];
-                    if (!chunk || !enrichResult?.context) continue;
-
-                    await query(
-                        `INSERT INTO knowledge_conflicts (id, user_id, agent_id, topic, details, status, detected_at)
-                         VALUES ($1, $2, $3, $4, $5, 'NEW', NOW())`,
-                        [
-                            crypto.randomUUID(),
-                            userId,
-                            agentId,
-                            `Возможное противоречие в "${filename}" (чанк ${chunkIdx})`,
-                            JSON.stringify({
-                                source: 'contextual_enrichment',
-                                filename,
-                                chunk_index: chunkIdx,
-                                chunk_text: chunk.text.slice(0, 500),
-                                enrichment_context: enrichResult.context,
-                                chunks_involved: [{ chunk_id: null, chunk_index: chunkIdx, knowledge_base_id: kbId }],
-                            }),
-                        ]
-                    );
-                }
-                console.log(`⚠️ Created ${enrichmentStats.conflictsFound} conflict records`);
-            } catch (conflictErr: any) {
-                console.warn(`Failed to create conflict records:`, conflictErr.message);
-            }
+        // Conflict detection is handled by the explicit audit endpoint (/kb/audit)
+        // Enrichment markers are logged but NOT saved as conflicts — they produce
+        // false positives because enrichment only sees the current document, not cross-document contradictions
+        if (enrichmentStats.conflictsFound > 0) {
+            console.log(`ℹ️ [Enrichment] ${enrichmentStats.conflictsFound} potential conflict markers detected in "${filename}" — skipping auto-creation, use /kb/audit for cross-document analysis`);
         }
 
         // ===== Deduct PU after successful vectorization =====
@@ -362,6 +356,7 @@ router.post('/vectorize', async (req: Request, res: Response) => {
         const deductSuccess = await deductPuBalance(userId, totalPuCost, {
             source: 'KB_UPLOAD',
             filename,
+            agentId,
             chargeReason: chargeInfo.reason,
             enrichmentTokens: enrichmentStats.totalTokensUsed,
         });
@@ -423,100 +418,6 @@ router.post('/vectorize', async (req: Request, res: Response) => {
     }
 });
 
-// ===== LEGACY: Upload and vectorize in one step =====
-router.post('/upload', upload.single('file'), async (req: Request, res: Response) => {
-    try {
-        const file = req.file;
-        const { agentId, userId } = req.body;
-
-        if (!file) {
-            return res.status(400).json({ error: 'No file provided' });
-        }
-
-        if (!agentId || !userId) {
-            return res.status(400).json({ error: 'agentId and userId are required' });
-        }
-
-        console.log(`📄 Processing document: ${file.originalname} for agent ${agentId}`);
-
-        // Parse document
-        const parsed = await parseDocument(file.buffer, file.originalname, file.mimetype);
-
-        console.log(`📊 Parsed ${parsed.chunks.length} chunks`);
-
-        // Add to Chroma
-        await chromaService.addDocuments(agentId, parsed.chunks);
-
-        console.log(`✅ Added to Chroma collection agent_${agentId}`);
-
-        // Save to knowledge_bases table
-        await query(
-            `INSERT INTO knowledge_bases (id, "agentId", filename, "fileUrl", "fileSize", "mimeType", created_at, updated_at, status)
-       VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, NOW(), NOW(), 'VECTORIZED')`,
-            [agentId, file.originalname, `chroma://agent_${agentId}`, file.size, file.mimetype]
-        );
-
-        return res.json({
-            success: true,
-            filename: file.originalname,
-            chunksCount: parsed.chunks.length,
-            agentId,
-        });
-    } catch (error: any) {
-        console.error('Document upload error:', error.message);
-        return res.status(500).json({
-            error: 'Failed to process document',
-            message: error.message,
-        });
-    }
-});
-
-// Upload text content directly (for string input)
-router.post('/upload-text', async (req: Request, res: Response) => {
-    try {
-        const schema = z.object({
-            agentId: z.string(),
-            userId: z.string(),
-            content: z.string().min(1),
-            filename: z.string().optional().default('text-input.txt'),
-        });
-
-        const parsed = schema.safeParse(req.body);
-
-        if (!parsed.success) {
-            return res.status(400).json({
-                error: 'Validation error',
-                details: parsed.error.flatten().fieldErrors,
-            });
-        }
-
-        const { agentId, userId, content, filename } = parsed.data;
-
-        console.log(`📝 Processing text input for agent ${agentId}`);
-
-        // Parse as text
-        const buffer = Buffer.from(content, 'utf-8');
-        const doc = await parseDocument(buffer, filename, 'text/plain');
-
-        // Add to Chroma
-        await chromaService.addDocuments(agentId, doc.chunks);
-
-        console.log(`✅ Added ${doc.chunks.length} chunks to Chroma`);
-
-        return res.json({
-            success: true,
-            filename,
-            chunksCount: doc.chunks.length,
-            agentId,
-        });
-    } catch (error: any) {
-        console.error('Text upload error:', error.message);
-        return res.status(500).json({
-            error: 'Failed to process text',
-            message: error.message,
-        });
-    }
-});
 
 // Search documents in agent's knowledge base
 router.post('/search', async (req: Request, res: Response) => {
@@ -549,7 +450,7 @@ router.post('/search', async (req: Request, res: Response) => {
         console.error('Document search error:', error.message);
         return res.status(500).json({
             error: 'Failed to search documents',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -576,7 +477,7 @@ router.get('/:agentId/info', async (req: Request, res: Response) => {
         console.error('Get knowledge base info error:', error.message);
         return res.status(500).json({
             error: 'Failed to get knowledge base info',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -601,7 +502,7 @@ router.delete('/:agentId', async (req: Request, res: Response) => {
         console.error('Delete knowledge base error:', error.message);
         return res.status(500).json({
             error: 'Failed to delete knowledge base',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -635,7 +536,7 @@ router.post('/delete-by-source', async (req: Request, res: Response) => {
         console.error('Delete by source error:', error.message);
         return res.status(500).json({
             error: 'Failed to delete documents by source',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });

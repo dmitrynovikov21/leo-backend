@@ -1,105 +1,54 @@
 model_list:
-  # Claude Series 4.5 (Forecasted/New)
-  - model_name: claude-opus-4-5
-    litellm_params:
-      model: anthropic/claude-opus-4-5-20251101
-      api_key: os.environ/ANTHROPIC_API_KEY
-  
-  - model_name: claude-haiku-4-5
-    litellm_params:
-      model: anthropic/claude-haiku-4-5-20251001
-      api_key: os.environ/ANTHROPIC_API_KEY
-      input_cost_per_token: 0.0000008
-      output_cost_per_token: 0.000004
-
-  - model_name: claude-sonnet-4-5
-    litellm_params:
-      model: anthropic/claude-sonnet-4-5-20250929
-      api_key: os.environ/ANTHROPIC_API_KEY
-
-  # Claude Series 4
-  - model_name: claude-opus-4
-    litellm_params:
-      model: anthropic/claude-opus-4-20250514
-      api_key: os.environ/ANTHROPIC_API_KEY
-
-  - model_name: claude-sonnet-4
-    litellm_params:
-      model: anthropic/claude-sonnet-4-20250514
-      api_key: os.environ/ANTHROPIC_API_KEY
-
-  # Legacy / Current Stable
-  - model_name: claude-3-5-haiku
-    litellm_params:
-      model: anthropic/claude-3-5-haiku-20241022
-      api_key: os.environ/ANTHROPIC_API_KEY
-
-  - model_name: claude-3-5-sonnet
-    litellm_params:
-      model: anthropic/claude-3-5-sonnet-20241022
-      api_key: os.environ/ANTHROPIC_API_KEY
-
-  # Claude 4.6
+  # === Primary: claude-sonnet-4-6 ===
   - model_name: claude-sonnet-4-6
     litellm_params:
-      model: anthropic/claude-sonnet-4-6
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: openrouter/anthropic/claude-sonnet-4-6
+      api_key: os.environ/OPENROUTER_KEY
 
-  # Aliases
-  - model_name: claude-haiku-4
+  # === Fallback 1: claude-opus-4-6 ===
+  - model_name: claude-opus-4-6
     litellm_params:
-      model: anthropic/claude-haiku-4-5-20251001
-      api_key: os.environ/ANTHROPIC_API_KEY
-      input_cost_per_token: 0.0000008
-      output_cost_per_token: 0.000004
+      model: openrouter/anthropic/claude-opus-4-6
+      api_key: os.environ/OPENROUTER_KEY
 
-  # OpenAI
-  - model_name: gpt-4o
+  # === Fallback 2: claude-sonnet-4-5 ===
+  - model_name: claude-sonnet-4-5
     litellm_params:
-      model: gpt-4o
-      api_key: os.environ/OPENAI_API_KEY
+      model: openrouter/anthropic/claude-sonnet-4-5
+      api_key: os.environ/OPENROUTER_KEY
 
-  - model_name: gpt-4o-mini
+  # === Fallback 3: gemini-3.1-pro-preview ===
+  - model_name: gemini-3.1-pro-preview
     litellm_params:
-      model: gpt-4o-mini
-      api_key: os.environ/OPENAI_API_KEY
+      model: openrouter/google/gemini-3.1-pro-preview
+      api_key: os.environ/OPENROUTER_KEY
 
+  # === Fallback 4: gemini-2.5-pro ===
+  - model_name: gemini-2.5-pro
+    litellm_params:
+      model: openrouter/google/gemini-2.5-pro
+      api_key: os.environ/OPENROUTER_KEY
+
+  # === Utility: embeddings (not in fallback chain) ===
   - model_name: text-embedding-3-small
     litellm_params:
       model: text-embedding-3-small
       api_key: os.environ/OPENAI_API_KEY
 
-  # OpenRouter
-  - model_name: openrouter-claude-3-5-sonnet
-    litellm_params:
-      model: openrouter/anthropic/claude-3.5-sonnet
-      api_key: os.environ/OPENROUTER_KEY
-
-  - model_name: openrouter-claude-3-5-haiku
-    litellm_params:
-      model: openrouter/anthropic/claude-3.5-haiku
-      api_key: os.environ/OPENROUTER_KEY
-
-  - model_name: openrouter-claude-sonnet-4-6
-    litellm_params:
-      model: openrouter/anthropic/claude-sonnet-4-6
-      api_key: os.environ/OPENROUTER_KEY
-
 router_settings:
   routing_strategy: "simple-shuffle"
-  num_retries: 3
+  enable_pre_call_checks: true
+  num_retries: 2
   timeout: 120
-  retry_after: 5
-  allowed_fails: 2
+  retry_after: 3
+  allowed_fails: 1
+  fallbacks:
+    - claude-sonnet-4-6: ["claude-opus-4-6", "claude-sonnet-4-5", "gemini-3.1-pro-preview", "gemini-2.5-pro"]
 
 litellm_settings:
   drop_params: true
   set_verbose: false
   callbacks: ["langsmith", "litellm_callbacks.postgres_usage_logger"]
-  fallbacks:
-    - {"openrouter-claude-3-5-sonnet": ["claude-sonnet-4-6", "claude-haiku-4-5", "gpt-4o-mini"]}
-    - {"claude-sonnet-4-6": ["openrouter-claude-sonnet-4-6", "claude-haiku-4-5", "gpt-4o-mini"]}
-    - {"openrouter-claude-sonnet-4-6": ["claude-sonnet-4-6", "claude-haiku-4-5", "gpt-4o-mini"]}
 
 environment_variables:
   LANGSMITH_API_KEY: os.environ/LANGSMITH_API_KEY

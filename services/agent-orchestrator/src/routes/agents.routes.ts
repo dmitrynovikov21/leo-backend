@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import { config } from '../config';
 import { agentsService } from '../services/agents.service';
 
 const router = Router();
@@ -56,7 +57,7 @@ router.get('/', async (req: Request, res: Response) => {
         console.error('Get agents error:', error.message);
         return res.status(500).json({
             error: 'Failed to get agents',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -79,7 +80,7 @@ router.post('/', async (req: Request, res: Response) => {
         console.error('Create agent error:', error.message);
         return res.status(500).json({
             error: 'Failed to create agent',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -101,7 +102,7 @@ router.get('/:id', async (req: Request, res: Response) => {
         console.error('Get agent error:', error.message);
         return res.status(500).json({
             error: 'Failed to get agent',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -132,7 +133,7 @@ router.put('/:id', async (req: Request, res: Response) => {
         console.error('Update agent error:', error.message);
         return res.status(500).json({
             error: 'Failed to update agent',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -145,19 +146,20 @@ const getStatsPeriodSchema = z.object({
 // GET /api/v1/agents/stats/overview - Get global user stats
 router.get('/stats/overview', async (req: Request, res: Response) => {
     try {
-        const userId = req.headers['x-user-id'] as string; // Assuming auth middleware adds this header
+        const userId = req.headers['x-user-id'] as string;
 
-        // Fallback for dev/test without auth middleware
-        const targetUserId = userId || 'user123';
+        if (!userId) {
+            return res.status(400).json({ error: 'x-user-id header is required' });
+        }
 
-        const stats = await agentsService.getUserStats(targetUserId);
+        const stats = await agentsService.getUserStats(userId);
 
         return res.json(stats);
     } catch (error: any) {
         console.error('Get user stats error:', error.message);
         return res.status(500).json({
             error: 'Failed to get user stats',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -166,16 +168,19 @@ router.get('/stats/overview', async (req: Request, res: Response) => {
 router.get('/stats/history', async (req: Request, res: Response) => {
     try {
         const userId = req.headers['x-user-id'] as string;
-        const targetUserId = userId || 'user123';
 
-        const history = await agentsService.getUserStatsHistory(targetUserId);
+        if (!userId) {
+            return res.status(400).json({ error: 'x-user-id header is required' });
+        }
+
+        const history = await agentsService.getUserStatsHistory(userId);
 
         return res.json(history);
     } catch (error: any) {
         console.error('Get user stats history error:', error.message);
         return res.status(500).json({
             error: 'Failed to get user stats history',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -191,7 +196,7 @@ router.get('/:id/stats', async (req: Request, res: Response) => {
         console.error('Get agent stats error:', error.message);
         return res.status(500).json({
             error: 'Failed to get agent stats',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -217,7 +222,7 @@ router.get('/:id/stats/period', async (req: Request, res: Response) => {
         console.error('Get agent stats by period error:', error.message);
         return res.status(500).json({
             error: 'Failed to get agent period stats',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -248,7 +253,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
         console.error('Update agent error:', error.message);
         return res.status(500).json({
             error: 'Failed to update agent',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -263,7 +268,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
         console.error('Delete agent error:', error.message);
         return res.status(500).json({
             error: 'Failed to delete agent',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -285,7 +290,7 @@ router.post('/:id/start', async (req: Request, res: Response) => {
         console.error('Start agent error:', error.message);
         return res.status(500).json({
             error: 'Failed to start agent',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -307,7 +312,7 @@ router.post('/:id/stop', async (req: Request, res: Response) => {
         console.error('Stop agent error:', error.message);
         return res.status(500).json({
             error: 'Failed to stop agent',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -332,7 +337,7 @@ router.get('/:id/status', async (req: Request, res: Response) => {
         console.error('Get agent status error:', error.message);
         return res.status(500).json({
             error: 'Failed to get agent status',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });

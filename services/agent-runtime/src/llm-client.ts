@@ -48,6 +48,7 @@ class LLMClient {
             baseURL: config.gatewayUrl,
             headers: {
                 'Content-Type': 'application/json',
+                ...(config.apiSecret ? { 'x-api-secret': config.apiSecret } : {}),
             },
             timeout: 120000, // 2 minutes for LLM responses
         });

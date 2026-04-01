@@ -56,10 +56,10 @@ export async function calculateFileCharge(
         };
     }
 
-    // 3. Calculate similarity
-    const previousHash = previousVersions[0].content_hash;
-    const similarity = calculateStringHashSimilarity(previousHash, contentHash);
-    const diffPercent = 100 - similarity;
+    // 3. Hashes differ — it's an update. Charge full price.
+    // Accurate similarity detection requires embeddings/MinHash which is overkill here.
+    // If hashes match, it's caught above as DUPLICATE. Otherwise, charge as new file.
+    const diffPercent = 100;
 
     // 4. Apply charging rules
     let chargePercent = 100;
@@ -125,6 +125,7 @@ export async function deductPuBalance(
         filename: string;
         chargeReason: string;
         enrichmentTokens?: number;
+        agentId?: string | null;
     }
 ): Promise<boolean> {
     try {
@@ -154,7 +155,7 @@ export async function deductPuBalance(
 
         await query(
             `INSERT INTO pu_transactions
-             (id, user_id, type, "puAmount", balance_before, balance_after, source, description, metadata, created_at)
+             (id, user_id, type, pu_amount, balance_before, balance_after, source, description, metadata, created_at)
              VALUES ($1, $2, 'OVERAGE_DEDUCTION', $3::numeric, $4::numeric, $5::numeric, $6, $7, $8, NOW())`,
             [
                 crypto.randomUUID(),
@@ -163,7 +164,11 @@ export async function deductPuBalance(
                 balanceBefore,
                 balanceAfter,
                 metadata.source,
-                `PU Deduction: ${metadata.filename} (${metadata.chargeReason})`,
+                metadata.source === 'LLM_CHAT'
+                    ? 'Расход на диалог с агентом'
+                    : metadata.source === 'KB_UPLOAD'
+                    ? `Загрузка документа: ${metadata.filename}`
+                    : `Использование: ${metadata.filename}`,
                 JSON.stringify(metadata),
             ]
         );
@@ -198,10 +203,11 @@ export async function saveFileProcessingCache(
 
     // Columns: agent_id, filename, content_hash, file_size, chunk_count, pu_charged, charge_percentage, vectorization_date, previous_version, created_at
     await query(
-        `INSERT INTO file_processing_cache 
-     (id, agent_id, filename, content_hash, file_size, chunk_count, 
+        `INSERT INTO file_processing_cache
+     (id, agent_id, filename, content_hash, file_size, chunk_count,
       pu_charged, charge_percentage, vectorization_date, previous_version, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, NOW())`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, NOW())
+     ON CONFLICT (agent_id, content_hash) DO NOTHING`,
         [
             crypto.randomUUID(),
             agentId,
@@ -222,18 +228,7 @@ function tokensTopu(tokens: number): number {
     return tokens / 1000; // 1 PU = 1000 tokens
 }
 
-function calculateStringHashSimilarity(hash1: string, hash2: string): number {
-    if (hash1 === hash2) return 100;
-
-    let differences = 0;
-    const minLen = Math.min(hash1.length, hash2.length);
-
-    for (let i = 0; i < minLen; i++) {
-        if (hash1[i] !== hash2[i]) differences++;
-    }
-
-    differences += Math.abs(hash1.length - hash2.length);
-    const similarity = Math.max(0, 100 - (differences / minLen) * 100);
-
-    return Math.round(similarity);
-}
+// Removed: calculateStringHashSimilarity was comparing SHA-256 hashes character-by-character,
+// which is meaningless — cryptographic hashes have no correlation with content similarity.
+// For now, any non-duplicate update is charged at full rate.
+// TODO: implement cosine similarity on embeddings if partial-update pricing is needed.

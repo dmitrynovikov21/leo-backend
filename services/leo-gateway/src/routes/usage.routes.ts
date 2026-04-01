@@ -1,3 +1,4 @@
+import { config } from '../config';
 import { Router, Request, Response } from 'express';
 import { usageService } from '../services/usage.service';
 
@@ -20,7 +21,7 @@ router.get('/:userId', async (req: Request, res: Response) => {
         console.error('Get usage error:', error.message);
         return res.status(500).json({
             error: 'Failed to get usage',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });

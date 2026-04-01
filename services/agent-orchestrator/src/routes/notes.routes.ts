@@ -27,7 +27,10 @@ async function vectorizeNote(agentId: string, noteId: string, content: string): 
 
     const response = await fetch(`${config.gatewayUrl}/api/v1/documents/vectorize`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            ...(config.apiSecret && { 'x-api-secret': config.apiSecret }),
+        },
         body: JSON.stringify({
             agentId,
             userId: 'system', // Notes are system-level
@@ -52,7 +55,10 @@ async function deleteNoteVectors(agentId: string, noteId: string): Promise<void>
         // Delete by source filename pattern
         const response = await fetch(`${config.gatewayUrl}/api/v1/documents/delete-by-source`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                ...(config.apiSecret && { 'x-api-secret': config.apiSecret }),
+            },
             body: JSON.stringify({
                 agentId,
                 source: `note_${noteId}`,
@@ -120,7 +126,7 @@ router.post('/:agentId/notes', async (req: Request, res: Response) => {
         console.error('Create note error:', error.message);
         return res.status(500).json({
             error: 'Failed to create note',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -150,7 +156,7 @@ router.get('/:agentId/notes', async (req: Request, res: Response) => {
         console.error('Get notes error:', error.message);
         return res.status(500).json({
             error: 'Failed to get notes',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -229,7 +235,7 @@ router.put('/:agentId/notes/:noteId', async (req: Request, res: Response) => {
         console.error('Update note error:', error.message);
         return res.status(500).json({
             error: 'Failed to update note',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -260,7 +266,7 @@ router.delete('/:agentId/notes/:noteId', async (req: Request, res: Response) => 
         console.error('Delete note error:', error.message);
         return res.status(500).json({
             error: 'Failed to delete note',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });

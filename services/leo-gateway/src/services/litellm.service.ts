@@ -138,7 +138,13 @@ class LiteLLMService {
             messages: [
                 {
                     role: 'system',
-                    content: `You are an expert at creating AI assistant personas. Generate a detailed system prompt for an AI assistant based on the given role and description. The prompt should define the assistant's personality, communication style, expertise areas, and behavioral guidelines. Output only the system prompt, nothing else.`,
+                    content: `You are an expert at creating AI assistant personas. Generate a detailed system prompt for an AI assistant based on the given role and description.
+
+Structure the prompt using top-level XML tags as section separators (e.g. <role>, <style>, <rules>, <expertise>, <fallback>).
+IMPORTANT: Do NOT use XML tags INSIDE blocks — no XML for examples, response templates, or formatting rules. Use bullet lists or plain text instead.
+
+The prompt should define: personality, communication style, expertise areas, behavioral guidelines, and fallback behavior.
+Write in Russian. Output only the system prompt, nothing else.`,
                 },
                 {
                     role: 'user',

@@ -1,19 +1,24 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query } from '../db';
+import { config } from '../config';
 import * as puChargingService from '../services/pu-charging.service';
 
 const router = Router();
 
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+if (!config.webhookSecret && !config.isDev) {
+    console.error('FATAL: WEBHOOK_SECRET is required in production. Set it in environment variables.');
+    process.exit(1);
+}
 
 function verifyWebhookSecret(req: Request, res: Response, next: Function) {
-    if (!WEBHOOK_SECRET) {
-        console.warn('[LLM Webhook] WEBHOOK_SECRET not set — endpoint is unprotected');
+    if (!config.webhookSecret) {
+        // Only reachable in dev mode (production exits above)
+        console.warn('[LLM Webhook] WEBHOOK_SECRET not set — endpoint is unprotected (dev mode)');
         return next();
     }
     const provided = req.headers['x-webhook-secret'];
-    if (provided !== WEBHOOK_SECRET) {
+    if (provided !== config.webhookSecret) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
     next();
@@ -68,6 +73,7 @@ router.post('/llm-webhook', verifyWebhookSecret, async (req: Request, res: Respo
                 {
                     source: 'LLM_CHAT',
                     filename: data.model,
+                    agentId: data.agentId || null,
                     chargeReason: `Usage charge for ${data.model} (${data.totalTokens} tokens)`
                 }
             );
@@ -135,7 +141,7 @@ router.post('/llm-webhook', verifyWebhookSecret, async (req: Request, res: Respo
         console.error('LLM webhook error:', error.message);
         return res.status(500).json({
             error: 'Failed to record usage',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });

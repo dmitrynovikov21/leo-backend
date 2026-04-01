@@ -76,7 +76,7 @@ services:
       - CHROMA_URL=http://chroma:8000
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
-      - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-openrouter-claude-3-5-sonnet}
+      - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-claude-sonnet-4-6}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
       - NODE_ENV=development
     ports:

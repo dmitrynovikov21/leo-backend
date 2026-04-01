@@ -15,7 +15,19 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Health check
+// API Key auth middleware
+function requireApiKey(req: express.Request, res: express.Response, next: express.NextFunction) {
+    if (!config.apiSecret) {
+        return next();
+    }
+    const provided = req.headers['x-api-secret'] as string;
+    if (provided !== config.apiSecret) {
+        return res.status(401).json({ error: 'Unauthorized: invalid or missing API key' });
+    }
+    next();
+}
+
+// Health check (no auth required)
 app.get('/health', async (req, res) => {
     try {
         await pool.query('SELECT 1');
@@ -25,7 +37,8 @@ app.get('/health', async (req, res) => {
     }
 });
 
-// Routes
+// All routes require API key
+app.use(requireApiKey);
 app.use('/api/v1/agents', agentsRoutes);
 app.use('/api/v1/agents', behaviorRoutes);
 app.use('/api/v1/agents', scheduleRoutes);

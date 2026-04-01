@@ -1,3 +1,4 @@
+import { config } from '../config';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { litellmService } from '../services/litellm.service';
@@ -35,7 +36,7 @@ router.post('/', async (req: Request, res: Response) => {
         console.error('Generate persona error:', error.message);
         return res.status(500).json({
             error: 'Failed to generate persona',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });

@@ -7,9 +7,11 @@ const envSchema = z.object({
     CHROMA_URL: z.string().default('http://chroma:8000'),
     OPENAI_API_KEY: z.string().optional(),
     EMBEDDING_MODEL: z.string().default('text-embedding-3-small'),
-    DEFAULT_LLM_MODEL: z.string().default('openrouter-claude-3-5-sonnet'),
+    DEFAULT_LLM_MODEL: z.string().default('claude-sonnet-4-6'),
     LITELLM_MASTER_KEY: z.string().optional(),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+    API_SECRET: z.string().optional(),
+    WEBHOOK_SECRET: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -30,4 +32,6 @@ export const config = {
     litellmMasterKey: parsed.data.LITELLM_MASTER_KEY,
     nodeEnv: parsed.data.NODE_ENV,
     isDev: parsed.data.NODE_ENV === 'development',
+    apiSecret: parsed.data.API_SECRET,
+    webhookSecret: parsed.data.WEBHOOK_SECRET,
 };

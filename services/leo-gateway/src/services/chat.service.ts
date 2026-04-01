@@ -57,17 +57,17 @@ function sessionToUserId(sessionId: string): number {
 
 class ChatService {
 
-    async getAgentConfig(agentId: string): Promise<{ systemPrompt: string; name: string; temperature: number; model: string | null } | null> {
+    async getAgentConfig(agentId: string): Promise<{ systemPrompt: string; name: string; temperature: number } | null> {
         const agent = await queryOne<{
             systemPrompt: string;
             name: string;
             display_name: string | null;
             temperature: number;
-            model: string | null;
+            show_sources: boolean;
             tone: string[] | null;
-            guardrails: { id: string; rule: string }[] | null;
+            guardrails: { rule: string }[] | null;
         }>(
-            `SELECT "systemPrompt", name, display_name, temperature, model, tone, guardrails FROM agents WHERE id = $1`,
+            `SELECT "systemPrompt", name, display_name, temperature, show_sources, tone, guardrails FROM agents WHERE id = $1`,
             [agentId]
         );
 
@@ -100,6 +100,11 @@ class ChatService {
             }
         }
 
+        // Add source citation instruction
+        if (agent.show_sources) {
+            fullPrompt += `\n\n## ИСТОЧНИКИ\nВ конце каждого ответа, основанного на базе знаний, указывай источник информации в формате:\nИсточник: имя_файла.docx\nЕсли информация из нескольких файлов — перечисли все. Если ответ не из базы знаний — не указывай источник.`;
+        }
+
         // Add conflict detection protocol
         fullPrompt += `\n\n${await promptService.getPrompt('conflict_detection_protocol')}`;
 
@@ -111,7 +116,6 @@ class ChatService {
             systemPrompt: fullPrompt,
             name: agent.name,
             temperature: agent.temperature ?? 0.5,
-            model: agent.model || null,
         };
     }
 
@@ -340,7 +344,7 @@ Content: ${n.content}`)
         const response = await litellmService.chatCompletion({
             userId: trackingUserId,
             agentId: agentId,
-            model: agentConfig.model || config.defaultLlmModel,
+            model: config.defaultLlmModel,
             messages: chatMessages,
             temperature: agentConfig.temperature,
             tools: agentTools,
@@ -380,7 +384,7 @@ Content: ${n.content}`)
             const followUpResponse = await litellmService.chatCompletion({
                 userId: trackingUserId,
                 agentId: agentId,
-                model: agentConfig.model || config.defaultLlmModel,
+                model: config.defaultLlmModel,
                 messages: updatedMessages,
                 temperature: agentConfig.temperature,
                 tools: agentTools,

@@ -52,17 +52,28 @@ class ChromaService {
     async addDocuments(agentId: string, chunks: DocumentChunk[]): Promise<void> {
         const collection = await this.getOrCreateCollection(agentId);
 
-        // Generate embeddings
-        const embeddings = await this.getEmbeddingFunction().generate(
-            chunks.map(c => c.content)
-        );
+        // Batch embeddings to stay under OpenAI's 300k token limit per request
+        // ~50 chunks per batch is safe for typical chunk sizes (2-5k tokens each)
+        const BATCH_SIZE = 50;
 
-        await collection.add({
-            ids: chunks.map(c => c.id),
-            documents: chunks.map(c => c.content),
-            embeddings: embeddings,
-            metadatas: chunks.map(c => c.metadata),
-        });
+        for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+            const batch = chunks.slice(i, i + BATCH_SIZE);
+
+            const embeddings = await this.getEmbeddingFunction().generate(
+                batch.map(c => c.content)
+            );
+
+            await collection.add({
+                ids: batch.map(c => c.id),
+                documents: batch.map(c => c.content),
+                embeddings: embeddings,
+                metadatas: batch.map(c => c.metadata),
+            });
+
+            if (i + BATCH_SIZE < chunks.length) {
+                console.log(`📦 Embedded batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(chunks.length / BATCH_SIZE)} for agent ${agentId}`);
+            }
+        }
     }
 
     async searchDocuments(

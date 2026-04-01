@@ -1,3 +1,4 @@
+import { config } from '../config';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { scheduleService } from '../services/schedule.service';
@@ -31,7 +32,7 @@ router.get('/:id/schedule', async (req: Request, res: Response) => {
         console.error('Get schedule error:', error.message);
         return res.status(500).json({
             error: 'Failed to get schedule',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });
@@ -60,7 +61,7 @@ router.put('/:id/schedule', async (req: Request, res: Response) => {
         console.error('Update schedule error:', error.message);
         return res.status(500).json({
             error: 'Failed to update schedule',
-            message: error.message,
+            ...(config.isDev && { message: error.message }),
         });
     }
 });

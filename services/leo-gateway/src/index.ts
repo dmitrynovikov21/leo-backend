@@ -21,7 +21,20 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Health check
+// API Key auth middleware
+function requireApiKey(req: express.Request, res: express.Response, next: express.NextFunction) {
+    if (!config.apiSecret) {
+        // No secret configured — allow all (dev mode)
+        return next();
+    }
+    const provided = req.headers['x-api-secret'] as string;
+    if (provided !== config.apiSecret) {
+        return res.status(401).json({ error: 'Unauthorized: invalid or missing API key' });
+    }
+    next();
+}
+
+// Health check (no auth required)
 app.get('/health', async (req, res) => {
     try {
         await pool.query('SELECT 1');
@@ -31,8 +44,11 @@ app.get('/health', async (req, res) => {
     }
 });
 
-// Routes
+// Webhook has its own auth (WEBHOOK_SECRET), no API key needed
 app.use('/api/v1', llmWebhookRoutes);
+
+// All other routes require API key
+app.use(requireApiKey);
 app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/generate-persona', personaRoutes);
 app.use('/api/v1/usage', usageRoutes);

@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: litellm
-      POSTGRES_PASSWORD: litellm_password
+      POSTGRES_PASSWORD: ${LITELLM_DB_PASSWORD:-litellm_password}
       POSTGRES_DB: litellm
     volumes:
       - litellm_postgres_data:/var/lib/postgresql/data
@@ -26,13 +26,14 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENROUTER_KEY=${OPENROUTER_KEY:-}
-      - DATABASE_URL=postgresql://litellm:litellm_password@litellm-db:5432/litellm
+      - DATABASE_URL=postgresql://litellm:${LITELLM_DB_PASSWORD:-litellm_password}@litellm-db:5432/litellm
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
-      - UI_USERNAME=admin
-      - UI_PASSWORD=admin
+      - UI_USERNAME=${LITELLM_UI_USERNAME:-admin}
+      - UI_PASSWORD=${LITELLM_UI_PASSWORD:-admin}
       # Main database for usage logging callback
       - LEO_DATABASE_URL=${DATABASE_URL}
       - LEO_WEBHOOK_URL=http://leo-gateway:8080/api/v1/llm-webhook
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
       # Python path for custom callbacks
       - PYTHONPATH=/app
       # LangSmith tracing
@@ -76,9 +77,11 @@ services:
       - CHROMA_URL=http://chroma:8000
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
-      - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-openrouter-claude-3-5-sonnet}
+      - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-claude-sonnet-4-6}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
       - NODE_ENV=production
+      - API_SECRET=${API_SECRET}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
     depends_on:
       - litellm
       - chroma
@@ -104,6 +107,7 @@ services:
       - AGENT_IMAGE=leo-agent-runtime:latest
       - DOCKER_NETWORK=leo_default
       - NODE_ENV=production
+      - API_SECRET=${API_SECRET}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
