@@ -66,8 +66,11 @@ class ChatService {
             show_sources: boolean;
             tone: string[] | null;
             guardrails: { rule: string }[] | null;
+            work_schedule: boolean[][] | null;
+            holidays: string[] | null;
+            conversation_examples: string | null;
         }>(
-            `SELECT "systemPrompt", name, display_name, temperature, show_sources, tone, guardrails FROM agents WHERE id = $1`,
+            `SELECT "systemPrompt", name, display_name, temperature, show_sources, tone, guardrails, work_schedule, holidays, conversation_examples FROM agents WHERE id = $1`,
             [agentId]
         );
 
@@ -103,6 +106,36 @@ class ChatService {
         // Add source citation instruction
         if (agent.show_sources) {
             fullPrompt += `\n\n## ИСТОЧНИКИ\nВ конце каждого ответа, основанного на базе знаний, указывай источник информации в формате:\nИсточник: имя_файла.docx\nЕсли информация из нескольких файлов — перечисли все. Если ответ не из базы знаний — не указывай источник.`;
+        }
+
+        // Add conversation examples
+        if (agent.conversation_examples) {
+            fullPrompt += `\n\n## ЭТАЛОННЫЙ ПРИМЕР РАЗГОВОРА\nОриентируйся на этот пример при формулировке ответов:\n${agent.conversation_examples}`;
+        }
+
+        // Add schedule description
+        if (agent.work_schedule) {
+            const dayNamesShort = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+            const lines: string[] = [];
+            for (let day = 0; day < 7; day++) {
+                const daySchedule = agent.work_schedule[day];
+                if (!daySchedule) continue;
+                const ranges: string[] = [];
+                let start: number | null = null;
+                for (let hour = 0; hour <= 24; hour++) {
+                    const isWorking = hour < 24 && daySchedule[hour] === true;
+                    if (isWorking && start === null) start = hour;
+                    else if (!isWorking && start !== null) {
+                        ranges.push(`${start.toString().padStart(2, '0')}:00-${hour.toString().padStart(2, '0')}:00`);
+                        start = null;
+                    }
+                }
+                lines.push(ranges.length === 0 ? `${dayNamesShort[day]}: выходной` : `${dayNamesShort[day]}: ${ranges.join(', ')}`);
+            }
+            fullPrompt += '\n\n## ГРАФИК РАБОТЫ\n' + lines.join('\n');
+            if (agent.holidays && agent.holidays.length > 0) {
+                fullPrompt += `\n\nВыходные дни: ${agent.holidays.join(', ')}`;
+            }
         }
 
         // Add conflict detection protocol
